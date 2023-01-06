@@ -76,6 +76,7 @@ class MoveBasic {
     double turningAcceleration;
     double angularTolerance;
     double maxLateralVelocity;
+    std::string axis;
 
     double maxLinearVelocity;
     double minLinearVelocity;
@@ -121,7 +122,7 @@ class MoveBasic {
                        const tf2::Transform& in, tf2::Transform& out);
 
   public:
-    MoveBasic();
+    MoveBasic(std::string ax);
 
     void run();
 
@@ -176,19 +177,21 @@ static void getPose(const tf2::Transform& tf, double& x, double& y, double& yaw)
 
 // Constructor
 
-MoveBasic::MoveBasic(): tfBuffer(ros::Duration(3.0)),
+MoveBasic::MoveBasic(std::string ax): tfBuffer(ros::Duration(3.0)),
                         listener(tfBuffer)
 {
     ros::NodeHandle nh("~");
 
+    axis = ax;
     // Velocity parameters
-    nh.param<double>("min_turning_velocity", minTurningVelocity, 0.18);
-    nh.param<double>("max_turning_velocity", maxTurningVelocity, 1.0);
+    nh.param<double>("min_turning_velocity", minTurningVelocity, 0.10);
+    nh.param<double>("max_turning_velocity", maxTurningVelocity, 0.5);
     nh.param<double>("max_lateral_velocity", maxLateralVelocity, 0.5);
     nh.param<double>("max_linear_velocity", maxLinearVelocity, 0.5);
-    nh.param<double>("min_linear_velocity", minLinearVelocity, 0.1);
-    nh.param<double>("linear_acceleration", linearAcceleration, 0.1);
-    nh.param<double>("turning_acceleration", turningAcceleration, 0.2);
+    // Target Velocity 
+    nh.param<double>("min_linear_velocity", minLinearVelocity, 0.3);
+    nh.param<double>("linear_acceleration", linearAcceleration, 0.5);
+    nh.param<double>("turning_acceleration", turningAcceleration, 0.1);
 
     // Within tolerance, goal is successfully reached
     nh.param<double>("angular_tolerance", angularTolerance, 0.05);
@@ -203,7 +206,7 @@ MoveBasic::MoveBasic(): tfBuffer(ros::Duration(3.0)),
     nh.param<double>("localization_latency", localizationLatency, 0.5);
 
     // how long robot can be driving away from the goal
-    nh.param<double>("runaway_timeout", runawayTimeoutSecs, 1.0);
+    nh.param<double>("runaway_timeout", runawayTimeoutSecs, 10.0);
 
     // how long to wait for an obstacle to disappear
     nh.param<double>("obstacle_wait_threshold", obstacleWaitThreshold, 60.0);
@@ -378,6 +381,7 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
     ROS_INFO("MoveBasic: Received goal %f %f %f %s", x, y, rad2deg(yaw), frameId.c_str());
 
     bool do_final_rotation = true;
+
     if (std::isnan(yaw)) {
         ROS_WARN("MoveBasic: Received a goal with invalid orientation, will go to it but not do final turn");
         do_final_rotation = false;
@@ -476,8 +480,7 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
         return;
     }
 
-    if (dist > linearTolerance) {
-
+    if (axis == "RZ"){
         // Initial rotation to face the goal
         double requestedYaw = atan2(linear.y(), linear.x());
         if (std::abs(requestedYaw) > angularTolerance) {
@@ -485,26 +488,17 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
                 return;
             }
         }
-        sleep(localizationLatency);
+    }
+    sleep(localizationLatency);
 
-        // Do linear portion of the goal
+    // Do linear portion of the goal
+    if(!(axis=="RZ")){
         if (!moveLinear(goalInDriving, drivingFrame)) {
             return;
         }
-        sleep(localizationLatency);
-
-        // Final rotation as specified in goal
-        if (do_final_rotation) {
-            double finalYaw = goalYaw - (yaw + requestedYaw);
-            if (std::abs(finalYaw) > angularTolerance) {
-                if (!rotate(finalYaw, drivingFrame)) {
-                    return;
-                }
-            }
-
-            sleep(localizationLatency);
-        }
+    sleep(localizationLatency);
     }
+
 
     actionServer->setSucceeded();
 }
@@ -519,8 +513,16 @@ void MoveBasic::sendCmd(double angular, double linear)
         linear = 0;
     }
     geometry_msgs::Twist msg;
-    msg.angular.z = angular;
-    msg.linear.x = linear;
+    // Change according to axis
+    if (axis == "X"){
+        msg.linear.x = linear;
+    }
+    else if(axis == "Y"){
+        msg.linear.y = linear;
+    }
+    else if(axis == "RZ"){
+        msg.angular.z = angular;
+    }
 
     cmdPub.publish(msg);
 }
@@ -563,6 +565,7 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
     double x, y, currentYaw;
     getPose(poseDriving, x, y, currentYaw);
     double requestedYaw = currentYaw + yaw;
+    ROS_INFO("current: %f, yaw:%f", currentYaw, yaw);
     normalizeAngle(requestedYaw);
     ROS_INFO("MoveBasic: Requested rotation %f", rad2deg(requestedYaw));
 
@@ -587,7 +590,8 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
         double angleRemaining = requestedYaw - currentYaw;
         normalizeAngle(angleRemaining);
 
-        double obstacle = collision_checker->obstacle_angle(angleRemaining > 0);
+        // double obstacle = collision_checker->obstacle_angle(angleRemaining > 0);
+        double obstacle = 99999;
         double remaining = std::min(std::abs(angleRemaining), std::abs(obstacle));
         double velocity = std::max(minTurningVelocity,
             std::min(remaining, std::min(maxTurningVelocity,
@@ -610,7 +614,7 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
             velocity = 0;
             done = true;
         }
-
+        // ROS_INFO("angle: %f", rad2deg(angleRemaining));
         bool counterwise = (angleRemaining < 0.0);
         if (counterwise) {
             velocity = -velocity;
@@ -648,6 +652,7 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
     double lateralError = 0.0;
     double prevLateralError = 0.0;
     double lateralDiff = 0.0;
+    double sign;
 
     bool done = false;
     ros::Rate r(50);
@@ -663,6 +668,27 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
         goalInBase = poseDriving * goalInDriving;
         remaining = goalInBase.getOrigin();
         double distRemaining = sqrt(remaining.x() * remaining.x() + remaining.y() * remaining.y());
+        // Change according to axis 
+        ROS_INFO(axis.c_str());
+        if (axis == "X"){
+            distRemaining = abs(remaining.x());
+            if(remaining.x() < 0.0){
+                sign = -1;
+            }
+            else{
+                sign = 1;
+            }
+        }
+        else if (axis == "Y"){
+            distRemaining = abs(remaining.y());
+            if(remaining.y() < 0.0){
+                sign = -1;
+            }
+            else{
+                sign = 1;
+            }
+        }
+        ROS_INFO("%f", sign);
 
         // PID lateral control to keep robot on path
         double rotation = 0.0;
@@ -696,11 +722,12 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
                                                         	forwardLeft,
                                                         	forwardRight);
 	}
-
+        ROS_INFO("%f", distRemaining);
         double velocity = std::max(minLinearVelocity,
 		std::min(std::min(std::abs(obstacleDist), std::abs(distRemaining)),
                 	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
 								    std::min(std::abs(obstacleDist), std::abs(distRemaining))))));
+        ROS_INFO("Vel:%f", velocity);
 
         bool obstacleDetected = (obstacleDist < forwardObstacleThreshold);
         if (obstacleDetected) {
@@ -736,17 +763,20 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
         /* Since we are dealing with imperfect localization we should make
          * sure we are at least runawayTimeout driving away from the goal*/
         double angleRemaining = std::atan2(remaining.y(), remaining.x());
-        if (std::cos(angleRemaining) < 0) {
-            if (ros::Time::now() - last > runawayTimeout) {
-                abortGoal("MoveBasic: Moving away from goal");
-                sendCmd(0, 0);
-                return false;
-            }
-        }
-        else {
-            // Only update time when moving towards the goal
-            last = ros::Time::now();
-        }
+        
+        // Check Angle remaining
+        // ROS_INFO("Angle remaining:%f", std::cos(angleRemaining));
+        // if (std::cos(angleRemaining) < 0) {
+        //     if (ros::Time::now() - last > runawayTimeout) {
+        //         abortGoal("MoveBasic: Moving away from goal");
+        //         sendCmd(0, 0);
+        //         return false;
+        //     }
+        // }
+        // else {
+        //     // Only update time when moving towards the goal
+        //     last = ros::Time::now();
+        // }
 
         /* Finish Check */
 
@@ -755,8 +785,8 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
             velocity = 0;
             done = true;
         }
-
-        sendCmd(rotation, velocity);
+        // ROS_INFO("Velocity %f", velocity* sign);
+        sendCmd(rotation, velocity * sign);
         ROS_DEBUG("Distance remaining: %f, Linear velocity: %f", distRemaining, velocity);
     }
 
@@ -766,7 +796,7 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
 
 int main(int argc, char ** argv) {
     ros::init(argc, argv, "move_basic");
-    MoveBasic mb_node;
+    MoveBasic mb_node("RZ");
     mb_node.run();
 
     return 0;
