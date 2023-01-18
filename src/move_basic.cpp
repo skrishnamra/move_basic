@@ -181,6 +181,7 @@ MoveBasic::MoveBasic(std::string ax): tfBuffer(ros::Duration(3.0)),
                         listener(tfBuffer)
 {
     ros::NodeHandle nh("~");
+    std::string ns = ros::this_node::getNamespace();
 
     axis = ax;
     // Velocity parameters
@@ -203,7 +204,7 @@ MoveBasic::MoveBasic(std::string ax): tfBuffer(ros::Duration(3.0)),
     nh.param<double>("lateral_kd", lateralKd, 3.0);
 
     // how long to wait after moving to be sure localization is accurate
-    nh.param<double>("localization_latency", localizationLatency, 0.5);
+    nh.param<double>("localization_latency", localizationLatency, 1.5);
 
     // how long robot can be driving away from the goal
     nh.param<double>("runaway_timeout", runawayTimeoutSecs, 10.0);
@@ -241,20 +242,20 @@ MoveBasic::MoveBasic(std::string ax): tfBuffer(ros::Duration(3.0)),
     errorPub =
         ros::Publisher(nh.advertise<geometry_msgs::Vector3>("/lateral_error", 1));
 
-    goalSub = nh.subscribe("/move_base_simple/goal", 1,
+    goalSub = nh.subscribe(ns + "/" + axis + "_simple" + "/goal", 1,
                             &MoveBasic::goalCallback, this);
 
-    stopSub = nh.subscribe("/move_base/stop", 1,
+    stopSub = nh.subscribe(ns + "/" + axis + "/stop", 1,
                             &MoveBasic::stopCallback, this);
 
     ros::NodeHandle actionNh("");
 
-    actionServer.reset(new MoveBaseActionServer(actionNh, "move_base",
+    actionServer.reset(new MoveBaseActionServer(actionNh, axis,
 	boost::bind(&MoveBasic::executeAction, this, _1)));
 
     actionServer->start();
     goalPub = actionNh.advertise<move_base_msgs::MoveBaseActionGoal>(
-      "/move_base/goal", 1);
+      ns + "/" + axis + "/goal", 1);
 
     obstacle_points.reset(new ObstaclePoints(nh, tfBuffer));
     collision_checker.reset(new CollisionChecker(nh, tfBuffer, *obstacle_points));
@@ -370,6 +371,7 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
     tf2::Transform goal;
     tf2::fromMsg(msg->target_pose.pose, goal);
     std::string frameId = msg->target_pose.header.frame_id;
+    // ROS_INFO(goal);
 
     // Needed for RobotCommander
     if (frameId[0] == '/')
@@ -482,12 +484,23 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
 
     if (axis == "RZ"){
         // Initial rotation to face the goal
-        double requestedYaw = atan2(linear.y(), linear.x());
+        // double requestedYaw = atan2(linear.y(), linear.x());
+
+        // Direct rotation to goal
+
+        double requestedYaw = goalYaw;
+        ROS_INFO("%f", rad2deg(goalYaw));
+
+
         if (std::abs(requestedYaw) > angularTolerance) {
             if (!rotate(requestedYaw, drivingFrame)) {
                 return;
             }
         }
+        else{
+                ROS_INFO("Less than angle tolerance");
+        }
+        ROS_INFO("Completed rotation");
     }
     sleep(localizationLatency);
 
@@ -564,9 +577,8 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
 
     double x, y, currentYaw;
     getPose(poseDriving, x, y, currentYaw);
-    double requestedYaw = currentYaw + yaw;
-    ROS_INFO("current: %f, yaw:%f", currentYaw, yaw);
-    normalizeAngle(requestedYaw);
+    double requestedYaw = yaw;
+    // normalizeAngle(requestedYaw);
     ROS_INFO("MoveBasic: Requested rotation %f", rad2deg(requestedYaw));
 
     int oscillations = 0;
@@ -588,6 +600,7 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
         getPose(poseDriving, x, y, currentYaw);
 
         double angleRemaining = requestedYaw - currentYaw;
+        ROS_INFO("requested: %f, current:%f", requestedYaw, currentYaw);
         normalizeAngle(angleRemaining);
 
         // double obstacle = collision_checker->obstacle_angle(angleRemaining > 0);
@@ -609,12 +622,16 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
             return false;
         }
 
+        ROS_INFO("%d", oscillations);
+        ROS_INFO("remain:%f", angleRemaining);
+        ROS_INFO("tolerance: %f", rad2deg(angularTolerance));
+
         if (std::abs(angleRemaining) < angularTolerance || oscillations > 2) {
             ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
             velocity = 0;
             done = true;
         }
-        // ROS_INFO("angle: %f", rad2deg(angleRemaining));
+        ROS_INFO("angle: %f", rad2deg(angleRemaining));
         bool counterwise = (angleRemaining < 0.0);
         if (counterwise) {
             velocity = -velocity;
@@ -796,6 +813,8 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
 
 int main(int argc, char ** argv) {
     ros::init(argc, argv, "move_basic");
+    MoveBasic mb_node("X");
+    MoveBasic mb_node("Y");
     MoveBasic mb_node("RZ");
     mb_node.run();
 
