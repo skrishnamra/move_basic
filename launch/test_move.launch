@@ -1,0 +1,13 @@
+<launch>
+    <arg name="X" default="0" />
+    <arg name="Y" default="0" />
+    <arg name="RZ" default="0" />
+    <arg name="offset" default="false"/>
+
+    <node name="test_move" pkg="move_basic" type="test_move.py" output="screen">
+        <param name="X" value="$(arg X)"/>
+        <param name="Y" value="$(arg Y)"/>
+        <param name="RZ" value="$(arg RZ)"/>
+        <param name="offset" value="$(arg offset)"/>
+    </node>
+</launch>
