@@ -55,6 +55,7 @@ typedef actionlib::QueuedActionServer<move_base_msgs::MoveBaseAction> MoveBaseAc
 
 class MoveBasic {
   private:
+    ros::NodeHandle nh;
     ros::Subscriber goalSub;
     ros::Subscriber stopSub;
 
@@ -122,7 +123,7 @@ class MoveBasic {
                        const tf2::Transform& in, tf2::Transform& out);
 
   public:
-    MoveBasic(std::string ax);
+    MoveBasic(ros::NodeHandle &nodeHandle,std::string ax);
 
     void run();
 
@@ -177,12 +178,11 @@ static void getPose(const tf2::Transform& tf, double& x, double& y, double& yaw)
 
 // Constructor
 
-MoveBasic::MoveBasic(std::string ax): tfBuffer(ros::Duration(3.0)),
+MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros::Duration(3.0)),
                         listener(tfBuffer)
 {
-    ros::NodeHandle nh("~");
     std::string ns = ros::this_node::getNamespace();
-
+    ros::NodeHandle nh = nodeHandle;
     axis = ax;
     // Velocity parameters
     nh.param<double>("min_turning_velocity", minTurningVelocity, 0.10);
@@ -492,20 +492,26 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
         ROS_INFO("%f", rad2deg(goalYaw));
 
 
-        if (std::abs(requestedYaw) > angularTolerance) {
-            if (!rotate(requestedYaw, drivingFrame)) {
-                return;
-            }
+        // if (std::abs(requestedYaw) > angularTolerance) {
+        //     if (!rotate(requestedYaw, drivingFrame)) {
+        //         return;
+        //     }
+        // }
+        // else{
+        //         ROS_INFO("Less than angle tolerance");
+        // }
+        // ROS_INFO("Completed rotation");
+        if (!rotate(requestedYaw, drivingFrame)) {
+            return;
         }
-        else{
-                ROS_INFO("Less than angle tolerance");
-        }
-        ROS_INFO("Completed rotation");
     }
     sleep(localizationLatency);
 
     // Do linear portion of the goal
     if(!(axis=="RZ")){
+        // Setting Target velocity parameter
+        nh.getParam("/move_base/move_basic/min_linear_velocity", minLinearVelocity);
+        nh.getParam("/move_base/move_basic/max_linear_velocity", maxLinearVelocity);
         if (!moveLinear(goalInDriving, drivingFrame)) {
             return;
         }
@@ -747,6 +753,8 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
         ROS_INFO("Vel:%f", velocity);
 
         bool obstacleDetected = (obstacleDist < forwardObstacleThreshold);
+        // Disable obstacle avoidance
+        obstacleDetected = false;
         if (obstacleDetected) {
             velocity = 0;
             if (!pausingForObstacle) {
@@ -813,10 +821,13 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
 
 int main(int argc, char ** argv) {
     ros::init(argc, argv, "move_basic");
-    MoveBasic mb_node("X");
-    MoveBasic mb_node("Y");
-    MoveBasic mb_node("RZ");
-    mb_node.run();
+    ros::NodeHandle nh("~");
+    MoveBasic mb_nodeX(nh,"X");
+    MoveBasic mb_nodeY(nh,"Y");
+    MoveBasic mb_nodeRZ(nh, "RZ");
+    mb_nodeX.run();
+    mb_nodeY.run();
+    mb_nodeRZ.run();
 
     return 0;
 }
