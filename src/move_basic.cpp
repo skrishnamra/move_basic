@@ -747,7 +747,7 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
 	}
         ROS_INFO("%f", distRemaining);
         double velocity = std::max(minLinearVelocity,
-		std::min(std::min(std::abs(obstacleDist), std::abs(distRemaining)),
+		std::min(std::min(std::abs(obstacleDist), std::abs(distRemaining/2)),
                 	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
 								    std::min(std::abs(obstacleDist), std::abs(distRemaining))))));
         ROS_INFO("Vel:%f", velocity);
