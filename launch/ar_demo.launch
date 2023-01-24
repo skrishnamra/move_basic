@@ -1,0 +1,16 @@
+<launch>
+    <arg name="X" default="0" />
+    <arg name="Y" default="0" />
+    <arg name="RZ" default="0" />
+    <arg name="offset" default="false"/>
+
+    <!-- <node name="ar_demo" pkg="move_basic" type="ar_move.py" output="screen">
+        <param name="X" value="$(arg X)"/>
+        <param name="Y" value="$(arg Y)"/>
+        <param name="RZ" value="$(arg RZ)"/>
+        <param name="offset" value="$(arg offset)"/>
+    </node> -->
+
+	<include file="$(find mobile_cmd_control)/launch/move_basic.launch"/>
+	<include file="$(find mobile_cmd_control)/launch/safety_stop.launch"/>
+</launch>
