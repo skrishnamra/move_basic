@@ -39,10 +39,11 @@ class ARMove(object):
                 for f in msg.transforms:
                     if target_id == f.fiducial_id:
                         self.clear_goals()
-                        break  
+                        return 
+                    
             except:
                 rospy.logdebug("Fiducial_transform not published")
-                rospy.sleep(0.2)
+                rospy.sleep(0.05)
                 pass
            
             
@@ -55,7 +56,7 @@ class ARMove(object):
             search_direction = 1
             search_distance = 2
             self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id)
-        rospy.sleep(0.5)
+        rospy.sleep(0.2)
  
         
         # Move towards the AR Board 
@@ -71,10 +72,13 @@ class ARMove(object):
         # if cmd.enable_x == True and cmd.enable_y == True and cmd.enable_z == True:
         
         # AR task
-        id_list = [0,1]
+        id_list = [0,1,2]
         for id in id_list:
+            if id == id_list[0]:
+                self.move_rz(self.rotate_to_angle([0,0,0]))
             self.ar_follow(id) 
-            if not id_list[-1]:
+            if id is not id_list[-1]:
+                rospy.sleep(1)
                 self.move_x(self.move_offset([-0.5,0,0]))
             rospy.sleep(2)
 
@@ -117,6 +121,21 @@ class ARMove(object):
         pose.header.stamp = rospy.Time.now()
         pose.header.frame_id = "base_link"
         
+        
+        goal = MoveBaseGoal()
+        goal.target_pose = pose
+        return goal
+    
+    def rotate_to_angle(self, target_yaw):  
+        try:
+            trans = self.tfBuffer.lookup_transform('map','base_link',rospy.Time(), rospy.Duration(1.0))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            raise
+        q = quaternion_from_euler(*target_yaw)
+        pose = PoseStamped(pose = Pose(Point(), Quaternion(*q)))
+        pose.header.stamp = rospy.Time.now()
+        pose.header.frame_id = "map"
+        pose.pose.position = trans.transform.translation
         
         goal = MoveBaseGoal()
         goal.target_pose = pose
