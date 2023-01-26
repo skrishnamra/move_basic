@@ -2,7 +2,7 @@
 
 import rospy
 from geometry_msgs.msg import PoseStamped, Quaternion, Point, Pose
-from tf.transformations import quaternion_from_euler
+from tf.transformations import quaternion_from_euler, quaternion_multiply
 import numpy as np 
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from actionlib import SimpleActionClient, SimpleActionServer
@@ -29,6 +29,9 @@ class ARMove(object):
         self.listener = tf2_ros.TransformListener(self.tfBuffer)
         self.ar_move_as = SimpleActionServer("ar_move", move_commandAction, self.move, auto_start=False)
         self.ar_move_as.start()
+        self.ar_move_as.register_preempt_callback(self.stop)
+        self.enable_ur3 = rospy.get_param("~enable_ur3", False)
+        rospy.loginfo(self.enable_ur3)
         rospy.sleep(2)
         
     def wait_for_id(self, target_id,timeout=30):
@@ -68,20 +71,28 @@ class ARMove(object):
         self.move_x(goal) 
         
         
-    def move(self, move_goal):
-        # if cmd.enable_x == True and cmd.enable_y == True and cmd.enable_z == True:
-        
-        # AR task
-        id_list = [0,1,2]
-        for id in id_list:
-            if id == id_list[0]:
-                self.move_rz(self.rotate_to_angle([0,0,0]))
-            self.ar_follow(id) 
-            if id is not id_list[-1]:
-                rospy.sleep(1)
-                self.move_x(self.move_offset([-0.5,0,0]))
-            rospy.sleep(2)
-
+    def move(self, move_goal):        
+        # AR Move
+        if move_goal.use_marker.data:
+            # AR task
+            self.id_list = list(range(move_goal.id.data + 1))
+            for id in self.id_list:
+                if id == self.id_list[0]:
+                    self.move_rz(self.rotate_to_angle([0,0,0]))
+                self.ar_follow(id) 
+                if id is not self.id_list[-1]:
+                    rospy.sleep(1)
+                    self.move_x(self.move_offset([-0.5,0,0]))
+                rospy.sleep(2)
+        # Normal Move
+        else:
+            if move_goal.enable_rz.data:
+                self.move_rz(self.rotate_offset(move_goal.target_pose))
+            if move_goal.enable_y.data:  
+                self.move_y(self.move_offset(move_goal.target_pose))
+            if move_goal.enable_x.data:
+                self.move_x(self.move_offset(move_goal.target_pose))
+        self.ar_move_as.set_succeeded()
         # move_goal = self.init_move_goal(frame="base_link")
         # move_goal.target_pose.pose.position.x += 0.4
         # self.move_x(move_goal)
@@ -115,9 +126,31 @@ class ARMove(object):
         goal.target_pose.pose.position.y += offset[1] 
         goal.target_pose.pose.position.z += offset[2]
         return goal
-        
+
+    def rotate_offset(self,offset):
+        if isinstance(offset, list) or isinstance(offset, np.ndarray):
+            pose = PoseStamped(pose = Pose(Point(), Quaternion(*quaternion_from_euler(0,0,np.rad2deg(offset[2])))))
+        else:
+            try:
+                trans = self.tfBuffer.lookup_transform('map','base_link',rospy.Time(0), rospy.Duration(1.0))
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                raise
+            p,q = self.transform_stamped_to_pq(trans)
+            q_target = [offset.pose.orientation.x, offset.pose.orientation.y, offset.pose.orientation.z, offset.pose.orientation.w]
+            q = quaternion_multiply(q, q_target)
+            pose = PoseStamped(pose = Pose(Point(*p), Quaternion(*q)))
+        pose.header.stamp = rospy.Time.now()
+        pose.header.frame_id = "map"
+        goal = MoveBaseGoal()
+        goal.target_pose = pose
+        return goal
+
     def move_offset(self,offset):
-        pose = PoseStamped(pose = Pose(Point(*offset), Quaternion(0,0,0,1)))
+        if isinstance(offset, list) or isinstance(offset, np.ndarray):
+            pose = PoseStamped(pose = Pose(Point(*offset), Quaternion(0,0,0,1)))
+        else:
+            pose = PoseStamped()
+            pose = offset
         pose.header.stamp = rospy.Time.now()
         pose.header.frame_id = "base_link"
         
@@ -174,7 +207,11 @@ class ARMove(object):
         self.Y_server.cancel_all_goals()
         self.RZ_server.cancel_all_goals()
         rospy.loginfo("Goals cleared")
-        
+
+    def stop(self):
+        self.clear_goals()
+        rospy.loginfo("Preempt Request")
+
     def transform_stamped_to_pq(self,trans):
         p = np.array([trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z])
         q = np.array([trans.transform.rotation.x, trans.transform.rotation.y,
@@ -190,9 +227,9 @@ if __name__ == "__main__":
     # main()
     ar_move = ARMove()
     
-    move_client = SimpleActionClient("ar_move", move_commandAction)
-    move_client.wait_for_server()
-    move_client.send_goal(move_commandGoal())
+    # move_client = SimpleActionClient("ar_move", move_commandAction)
+    # move_client.wait_for_server()
+    # move_client.send_goal(move_commandGoal())
     
 
     while not rospy.is_shutdown():
