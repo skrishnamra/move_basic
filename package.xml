@@ -4,13 +4,14 @@
   <version>0.4.1</version>
   <description>Simple navigation package</description>
 
-  <maintainer email="jimv@mrjim.com">Jim Vaughan</maintainer>
-  <maintainer email="send2arohan@gmail.com">Rohan Agrawal</maintainer>
-  <maintainer email="tp@ubiquityrobotics.com">Teodor Janez Podobnik</maintainer>
+  <maintainer email="toshio.ikeda@kawada.co.jp">Toshio Ikeda</maintainer>
+  <maintainer email="s.krishnamra@kawada.co.jp">Big</maintainer>
 
   <license>BSD</license>
+  <url type="website">http://www.kawada.co.jp</url>
+  <url type="bugtracker">https://github.com/kwdbridgedevelopment/paint_mobile_control/issues</url>
+  <url type="repository">https://github.com/kwdbridgedevelopment/paint_mobile_control</url>
 
-  <author email="jimv@mrjim.com">Jim Vaughan</author>
 
   <buildtool_depend>catkin</buildtool_depend>
 
