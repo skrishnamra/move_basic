@@ -33,6 +33,27 @@ class ARMove(object):
         self.enable_ur3 = rospy.get_param("~enable_ur3", False)
         rospy.loginfo(self.enable_ur3)
         rospy.sleep(2)
+
+    # UR Moving
+    # wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(5)))
+    # if wait.result == False:
+    #     rospy.loginfo("UR still mobing")
+    #     res = mobile_startResponse()
+    #     res.result = std_msgs.msg.Bool(True)
+    #     return res
+    # #Allowing UR3Moving 
+    # self.ur3_start_pub.publish(std_msgs.msg.Int32MultiArray(data = [1,0]))
+    # rospy.sleep(20)
+    # #Need to check if UR is Moving 
+    # self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(99)))
+    # rospy.loginfo("ur_done")
+    # self.ur3_start_pub.publish(std_msgs.msg.Int32MultiArray(data = [0,1]))
+    # rospy.sleep(2.0)
+
+    # UR3
+    # rospy.wait_for_service('ur3/modbus_wait')
+    # self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
+    # self.ur3_start_pub = rospy.Publisher("ur3/command_state", std_msgs.msg.Int32MultiArray, queue_size=10)
         
     def wait_for_id(self, target_id,timeout=30):
         time_limit = rospy.Time.now() + rospy.Duration(timeout)
@@ -51,14 +72,25 @@ class ARMove(object):
            
             
     def ar_follow(self,target_id):  
-        use_search = False
+        use_search = True
+        try:
+            msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=2.0)
+            for f in msg.transforms:
+                if target_id == f.fiducial_id:
+                    use_search = False
+                    if id == self.id_list[0]:
+                        self.move_rz(self.rotate_to_angle([0,0,0]))
+        except:
+            rospy.loginfo("Searching for AR Marker")
+
         # Move towards the ID if not already seen 
         # Search direction 1:Left -1:Right 
-        use_search = True
         if use_search:
             search_direction = 1
             search_distance = 2
             self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id)
+            rospy.sleep(2)
+            self.move_rz(self.rotate_to_angle([0,0,0]))
         rospy.sleep(0.2)
  
         
@@ -77,8 +109,6 @@ class ARMove(object):
             # AR task
             self.id_list = list(range(move_goal.id.data + 1))
             for id in self.id_list:
-                if id == self.id_list[0]:
-                    self.move_rz(self.rotate_to_angle([0,0,0]))
                 self.ar_follow(id) 
                 if id is not self.id_list[-1]:
                     rospy.sleep(1)
@@ -115,7 +145,7 @@ class ARMove(object):
             raise
 
         p,q = self.transform_stamped_to_pq(trans)
-        pose = PoseStamped(pose = Pose(Point(*p), Quaternion(*q )))
+        pose = PoseStamped(pose = Pose(Point(*p), Quaternion(0,0,0,1) ))
         pose.header.stamp = rospy.Time.now()
         pose.header.frame_id = "map"
         
@@ -211,6 +241,7 @@ class ARMove(object):
     def stop(self):
         self.clear_goals()
         rospy.loginfo("Preempt Request")
+
 
     def transform_stamped_to_pq(self,trans):
         p = np.array([trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z])
