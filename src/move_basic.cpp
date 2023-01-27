@@ -42,12 +42,14 @@
 #include <std_msgs/Float32.h>
 #include <std_msgs/Bool.h>
 #include <move_base_msgs/MoveBaseAction.h>
+#include <thread>
 
 #include <actionlib/server/simple_action_server.h>
 #include <dynamic_reconfigure/server.h>
 #include "move_basic/collision_checker.h"
 #include "move_basic/queued_action_server.h"
 #include <move_basic/MovebasicConfig.h>
+#include <actionlib_msgs/GoalID.h>
 
 #include <string>
 
@@ -116,6 +118,8 @@ class MoveBasic {
     void drawLine(double x0, double y0, double x1, double y1);
     void sendCmd(double angular, double linear);
     void abortGoal(const std::string msg);
+    int getNewGoal();
+    static void moveSmooth();
 
     bool getTransform(const std::string& from, const std::string& to,
                       tf2::Transform& tf);
@@ -352,6 +356,41 @@ void MoveBasic::abortGoal(const std::string msg)
     ROS_ERROR("%s", msg.c_str());
 }
 
+void MoveBasic::moveSmooth()
+{
+    sendCmd(linear_velocity, 0);
+    ros::Duration(3).sleep;
+    try
+    {
+        geometry_msgs::Twist twist = ros::topic::waitForMessage<geometry_msgs::Twist>("rover_twsit", ros::Duration(2));
+    }
+    catch(std::runtime_error ex)
+    {
+        // No new move base command so stop moving 
+        sendCmd(0, 0);
+    }
+}
+
+int MoveBasic::getNewGoal()
+{
+    int goalId = actionServer->current_goal.getGoal()->target_pose.header.seq;
+
+    ROS_INFO("%d",goalId);
+    return goalId;
+    // rospy.loginfo("Processing goal")
+    // timeout = rospy.Time.now() + rospy.Duration(5)
+    // while timeout > rospy.Time.now():
+    //     cg = self._as.current_goal.get_goal()
+    //     ng = self._as.next_goal.get_goal()
+    //     hasGoal = self._as.is_new_goal_available()
+    //     rospy.loginfo("current:{:>2} Next:{:>2} Avaliable:{}".format(cg.id.data, ng.id.data, hasGoal))
+    //     # Preempt the previous Goal
+    //     if hasGoal:
+    //         self._as.accept_new_goal()
+    //         rospy.loginfo("Accepting new goal")
+    //     rospy.sleep(0.2)
+}
+
 
 // Called when an action goal is received
 
@@ -367,6 +406,9 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
       To counter these issues, we plan in the map frame, and wait localizationLatency
       after each step, and execute in the odom frame.
     */
+    int n = getNewGoal();
+
+    ROS_INFO("starting new goal");
 
     tf2::Transform goal;
     tf2::fromMsg(msg->target_pose.pose, goal);
@@ -809,6 +851,10 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
             ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
             velocity = 0;
             done = true;
+            if (axis == "Y"){
+                std::thread continue_move(moveSmooth, this);
+            }
+            return done;
         }
         // ROS_INFO("Velocity %f", velocity* sign);
         sendCmd(rotation, velocity * sign);

@@ -1,0 +1,4 @@
+<launch>
+    <include file="$(find mobile_cmd_control)/launch/move_basic.launch"/>
+</launch>
+

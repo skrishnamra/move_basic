@@ -70,6 +70,9 @@ public:
     void setPreempted(const Result &result = Result(), const std::string &text = std::string(""));
     void start();
     void shutdown();
+    //  Make into private function
+    GoalHandle current_goal, next_goal;
+
 
 private:
     void goalCallback(GoalHandle preempt);
@@ -81,7 +84,6 @@ private:
 
     std::shared_ptr<ActionServer<ActionSpec>> as;
 
-    GoalHandle current_goal, next_goal;
 
     bool new_goal_, preempt_request_, new_goal_preempt_request_;
 
