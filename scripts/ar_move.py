@@ -58,14 +58,15 @@ class ARMove(object):
     # self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
     # self.ur3_start_pub = rospy.Publisher("ur3/command_state", std_msgs.msg.Int32MultiArray, queue_size=10)
         
-    def wait_for_id(self, target_id,timeout=30):
+    def wait_for_id(self, target_id,use_smooth=False,timeout=30):
         time_limit = rospy.Time.now() + rospy.Duration(timeout)
         while(rospy.Time(timeout) < rospy.Time.now()):
             try:
                 msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=0.1)
                 for f in msg.transforms:
                     if target_id == f.fiducial_id:
-                        self.clear_goals()
+                        if not use_smooth:
+                            self.clear_goals()
                         return 
                     
             except:
@@ -76,13 +77,15 @@ class ARMove(object):
             
     def ar_follow(self,target_id):  
         use_search = True
+        self.use_smooth = True
         try:
             msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=2.0)
             for f in msg.transforms:
                 if target_id == f.fiducial_id:
                     use_search = False
-                    if id == self.id_list[0]:
+                    if target_id == self.id_list[0]:
                         self.move_rz(self.rotate_to_angle([0,0,0]))
+                        
         except:
             rospy.loginfo("Searching for AR Marker")
 
@@ -91,19 +94,38 @@ class ARMove(object):
         if use_search:
             search_direction = 1
             search_distance = 2
-            self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id)
-            smooth_goal = move_smoothGoal()
-            smooth_goal.target_distance = Float32(0.2)
-            smooth_goal.target_speed = Float32(0.05)
-            self.move_smooth_ac.send_goal(smooth_goal)
-            # rospy.sleep(2)
-            # self.move_rz(self.rotate_to_angle([0,0,0]))
-        
-        # Move towards the AR Board 
-        goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
-        self.target_id = target_id
-        self.move_y(goal)
-        rospy.sleep(3.0)
+            self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id, use_smooth=self.use_smooth)
+            if self.use_smooth: 
+                # Move towards the AR Board 
+                now = rospy.Time.now()
+                goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                self.target_id = target_id
+                if target_id == self.id_list[0]:
+                    rospy.sleep(0.2)
+                    self.X_server.cancel_goals_at_and_before_time(now)
+                    self.Y_server.cancel_goals_at_and_before_time(now)
+                    self.RZ_server.cancel_goals_at_and_before_time(now)
+                    rospy.sleep(1.5)
+                    self.move_rz(self.rotate_to_angle([0,0,0]))
+                    goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                    self.move_y(goal)
+                else:
+                    self.move_y(goal, blocking=False)
+                    self.move_smooth(direction=3)
+                    rospy.sleep(0.3)
+                    self.X_server.cancel_goals_at_and_before_time(now)
+                    self.Y_server.cancel_goals_at_and_before_time(now)
+                    self.RZ_server.cancel_goals_at_and_before_time(now)
+                    self.Y_server.wait_for_result()
+            else:
+                if target_id == self.id_list[0]:
+                    self.move_rz(self.rotate_to_angle([0,0,0]))
+                else:
+                    # Move towards the AR Board 
+                    goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                    self.target_id = target_id
+                    self.move_y(goal)
+            rospy.sleep(3)
         goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
         self.move_x(goal) 
         
@@ -112,7 +134,8 @@ class ARMove(object):
         # AR Move
         if move_goal.use_marker.data:
             # AR task
-            self.id_list = list(range(move_goal.id.data + 1))
+            # self.id_list = list(range(move_goal.id.data + 1))
+            self.id_list = [1,2]
             for id in self.id_list:
                 self.ar_follow(id) 
                 if id is not self.id_list[-1]:
@@ -219,31 +242,35 @@ class ARMove(object):
         goal.target_pose = pose
         return goal
         
-    def move_x(self, goal):
+    def move_x(self, goal,blocking=True):
         self.target_pub.publish(goal.target_pose)
         self.X_server.send_goal(goal)
-        self.X_server.wait_for_result()
+        if blocking:
+            self.X_server.wait_for_result()
         rospy.loginfo("finish X")
         rospy.sleep(1)
         
-    def move_y(self,goal):
+    def move_y(self,goal,blocking=True):
         self.target_pub.publish(goal.target_pose)
         self.Y_server.send_goal(goal)
-        self.Y_server.wait_for_result()
+        if blocking:
+            self.Y_server.wait_for_result()
         rospy.loginfo("finish Y")
         rospy.sleep(1)
         
-    def search_y(self,goal,id):
+    def search_y(self,goal,id, use_smooth=False):
         self.target_pub.publish(goal.target_pose)
         self.Y_server.send_goal(goal)
-        self.wait_for_id(id)
+        self.wait_for_id(id, use_smooth=use_smooth)
         rospy.loginfo("Found Y")
         rospy.sleep(1)
         
-    def move_rz(self,goal):
+    def move_rz(self,goal,blocking=True):
         self.target_pub.publish(goal.target_pose)
         self.RZ_server.send_goal(goal)
-        self.RZ_server.wait_for_result()
+        rospy.loginfo("Doing RZ")
+        if blocking:
+            self.RZ_server.wait_for_result()
         rospy.loginfo("finish RZ")
         rospy.sleep(1)
         
