@@ -2,14 +2,15 @@
 
 import rospy
 from geometry_msgs.msg import PoseStamped, Quaternion, Point, Pose
-from std_msgs.msg import Float32, Int32
+from std_msgs.msg import Float32, Int32, Int32MultiArray
 from tf.transformations import quaternion_from_euler, quaternion_multiply
 import numpy as np 
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from actionlib import SimpleActionClient, SimpleActionServer
 import tf2_ros
 from fiducial_msgs.msg import FiducialTransform, FiducialTransformArray
-from mobile_cmd_control.msg import move_commandAction, move_commandResult, move_commandGoal, move_smoothAction, move_smoothGoal
+from mobile_cmd_control.msg import move_commandAction, move_commandResult, move_commandGoal, move_smoothAction, move_smoothGoal, \
+mobile_wait, mobile_waitRequest
 
 class ARMove(object):
     def __init__(self):
@@ -37,26 +38,13 @@ class ARMove(object):
         rospy.loginfo(self.enable_ur3)
         rospy.sleep(2)
 
-    # UR Moving
-    # wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(5)))
-    # if wait.result == False:
-    #     rospy.loginfo("UR still mobing")
-    #     res = mobile_startResponse()
-    #     res.result = std_msgs.msg.Bool(True)
-    #     return res
-    # #Allowing UR3Moving 
-    # self.ur3_start_pub.publish(std_msgs.msg.Int32MultiArray(data = [1,0]))
-    # rospy.sleep(20)
-    # #Need to check if UR is Moving 
-    # self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(99)))
-    # rospy.loginfo("ur_done")
-    # self.ur3_start_pub.publish(std_msgs.msg.Int32MultiArray(data = [0,1]))
-    # rospy.sleep(2.0)
 
-    # UR3
-    # rospy.wait_for_service('ur3/modbus_wait')
-    # self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
-    # self.ur3_start_pub = rospy.Publisher("ur3/command_state", std_msgs.msg.Int32MultiArray, queue_size=10)
+        # UR3 - Wait for Output Register on UR3 using client 
+        rospy.wait_for_service('ur3/modbus_wait')
+        self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
+        # Publisher to Modbus Server to write register to start UR3
+        self.ur3_start_pub = rospy.Publisher("ur3/command_state", Int32MultiArray, queue_size=10)
+
         
     def wait_for_id(self, target_id,use_smooth=False,timeout=30):
         time_limit = rospy.Time.now() + rospy.Duration(timeout)
@@ -120,11 +108,10 @@ class ARMove(object):
             else:
                 if target_id == self.id_list[0]:
                     self.move_rz(self.rotate_to_angle([0,0,0]))
-                else:
-                    # Move towards the AR Board 
-                    goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
-                    self.target_id = target_id
-                    self.move_y(goal)
+                # Move towards the AR Board 
+                goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                self.target_id = target_id
+                self.move_y(goal)
             rospy.sleep(3)
         goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
         self.move_x(goal) 
@@ -138,6 +125,20 @@ class ARMove(object):
             self.id_list = [1,2]
             for id in self.id_list:
                 self.ar_follow(id) 
+                if self.enable_ur3:
+                    # Calls service which Blocks mobile base if UR3 is not done with movement 
+                    # UR Moving
+                    self.move_client.cancel_all_goals()
+                    self.ur3_start_pub.publish(Int32MultiArray(data = [1,0]))
+                    #Need to check if UR is Moving 
+                    wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(20)))
+                    if wait.result == False:
+                        rospy.loginfo("UR still moving")
+                        self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+                    rospy.loginfo("ur_done")
+                    # Tel UR3 to Stop
+                    self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+                    rospy.sleep(2.0)
                 if id is not self.id_list[-1]:
                     rospy.sleep(1)
                     self.move_x(self.move_offset([-0.5,0,0]))
