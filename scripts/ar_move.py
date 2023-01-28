@@ -2,13 +2,14 @@
 
 import rospy
 from geometry_msgs.msg import PoseStamped, Quaternion, Point, Pose
+from std_msgs.msg import Float32, Int32
 from tf.transformations import quaternion_from_euler, quaternion_multiply
 import numpy as np 
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from actionlib import SimpleActionClient, SimpleActionServer
 import tf2_ros
 from fiducial_msgs.msg import FiducialTransform, FiducialTransformArray
-from mobile_cmd_control.msg import move_commandAction, move_commandResult, move_commandGoal
+from mobile_cmd_control.msg import move_commandAction, move_commandResult, move_commandGoal, move_smoothAction, move_smoothGoal
 
 class ARMove(object):
     def __init__(self):
@@ -19,11 +20,13 @@ class ARMove(object):
         self.RZ_server = SimpleActionClient(ns + '/RZ', MoveBaseAction)
         self.Y_server = SimpleActionClient(ns + '/Y', MoveBaseAction)
         self.X_server = SimpleActionClient(ns + '/X', MoveBaseAction)
+        self.move_smooth_ac = SimpleActionClient(ns + '/move_smooth', move_smoothAction)
         self.clear_goals()
         self.target_pub = rospy.Publisher(ns + "/goal", PoseStamped, queue_size=10)
         self.X_server.wait_for_server()
         self.Y_server.wait_for_server()
         self.RZ_server.wait_for_server()
+        self.move_smooth_ac.wait_for_server()
         
         self.tfBuffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tfBuffer)
@@ -89,10 +92,12 @@ class ARMove(object):
             search_direction = 1
             search_distance = 2
             self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id)
-            rospy.sleep(2)
-            self.move_rz(self.rotate_to_angle([0,0,0]))
-        rospy.sleep(0.2)
- 
+            smooth_goal = move_smoothGoal()
+            smooth_goal.target_distance = Float32(0.2)
+            smooth_goal.target_speed = Float32(0.05)
+            self.move_smooth_ac.send_goal(smooth_goal)
+            # rospy.sleep(2)
+            # self.move_rz(self.rotate_to_angle([0,0,0]))
         
         # Move towards the AR Board 
         goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
@@ -120,6 +125,7 @@ class ARMove(object):
                 self.move_rz(self.rotate_offset(move_goal.target_pose))
             if move_goal.enable_y.data:  
                 self.move_y(self.move_offset(move_goal.target_pose))
+                self.move_smooth(direction=3)
             if move_goal.enable_x.data:
                 self.move_x(self.move_offset(move_goal.target_pose))
         self.ar_move_as.set_succeeded()
@@ -136,7 +142,16 @@ class ARMove(object):
         move_goal = MoveBaseGoal()
         move_goal.target_pose = pose 
         return move_goal   
-           
+
+    # Only for y axis
+    def move_smooth(self, direction, blocking=False):
+        smooth_goal = move_smoothGoal()
+        smooth_goal.target_distance = Float32(0.2)
+        smooth_goal.target_speed = Float32(0.05)
+        smooth_goal.direction = Int32(direction)
+        self.move_smooth_ac.send_goal(smooth_goal)
+        if blocking:
+            self.move_smooth_ac.wait_for_result()     
             
     def AR_offset(self, id, offset):
         try:

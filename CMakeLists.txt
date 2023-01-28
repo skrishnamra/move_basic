@@ -17,6 +17,8 @@ find_package(catkin REQUIRED COMPONENTS
   dynamic_reconfigure
   message_generation
   message_runtime
+  mobile_cmd_control
+  
 )
 
 generate_dynamic_reconfigure_options(
@@ -43,6 +45,7 @@ catkin_package(
   actionlib_msgs
   std_msgs
   rostest
+  mobile_cmd_control
 )
 
 ###########

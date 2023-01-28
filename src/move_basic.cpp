@@ -49,11 +49,13 @@
 #include "move_basic/collision_checker.h"
 #include "move_basic/queued_action_server.h"
 #include <move_basic/MovebasicConfig.h>
+#include <mobile_cmd_control/move_smoothAction.h>
 #include <actionlib_msgs/GoalID.h>
 
 #include <string>
 
 typedef actionlib::QueuedActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
+typedef actionlib::SimpleActionServer<mobile_cmd_control::move_smoothAction> MoveSmoothActionServer;
 
 class MoveBasic {
   private:
@@ -70,6 +72,7 @@ class MoveBasic {
     std::unique_ptr<MoveBaseActionServer> actionServer;
     std::unique_ptr<CollisionChecker> collision_checker;
     std::unique_ptr<ObstaclePoints> obstacle_points;
+    std::unique_ptr<MoveSmoothActionServer> smooth_actionServer;
 
     tf2_ros::Buffer tfBuffer;
     tf2_ros::TransformListener listener;
@@ -119,13 +122,14 @@ class MoveBasic {
     void sendCmd(double angular, double linear);
     void abortGoal(const std::string msg);
     int getNewGoal();
-    static void moveSmooth();
 
     bool getTransform(const std::string& from, const std::string& to,
                       tf2::Transform& tf);
     bool transformPose(const std::string& from, const std::string& to,
                        const tf2::Transform& in, tf2::Transform& out);
-
+    
+    void move_smoothCB(const mobile_cmd_control::move_smoothGoalConstPtr &goal);
+    
   public:
     MoveBasic(ros::NodeHandle &nodeHandle,std::string ax);
 
@@ -263,12 +267,50 @@ MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros:
 
     obstacle_points.reset(new ObstaclePoints(nh, tfBuffer));
     collision_checker.reset(new CollisionChecker(nh, tfBuffer, *obstacle_points));
+    std::string action_name = "move_smooth";
 
+    if(axis == "Y")
+    {
+    smooth_actionServer.reset(new MoveSmoothActionServer(actionNh, action_name,
+	boost::bind(&MoveBasic::move_smoothCB, this, _1) ,false));
+    smooth_actionServer->start();
+    }
     ROS_INFO("Move Basic ready");
 }
 
 
 // Lookup the specified transform, returns true on success
+
+void MoveBasic::move_smoothCB(const mobile_cmd_control::move_smoothGoalConstPtr &goal){
+    float s= goal->target_distance.data;
+    float v = goal->target_speed.data;
+    float sleep_t = s/v;
+
+    if(goal->direction.data == 2){
+        sendCmd(0,goal->target_speed.data);
+    }
+    if(goal->direction.data == 3){
+        sendCmd(0,goal->target_speed.data);
+    }
+
+    sleep(sleep_t);
+    ROS_INFO("%f", sleep_t);
+    ROS_INFO(axis.c_str());
+
+    // See if another node is publishing the next command
+    std::string topic_name = "rover_twist";
+    try{
+        geometry_msgs::TwistConstPtr twist = ros::topic::waitForMessage<geometry_msgs::Twist>(topic_name, ros::Duration(3));
+    }
+    catch(ros::Exception){
+        ROS_INFO("No new command and stopping ");
+        sendCmd(0,0);
+    }
+
+    sendCmd(0,0.0);
+    ROS_INFO("Smooth Command");
+    smooth_actionServer->setSucceeded();
+}
 
 bool MoveBasic::getTransform(const std::string& from, const std::string& to,
                              tf2::Transform& tf)
@@ -356,20 +398,6 @@ void MoveBasic::abortGoal(const std::string msg)
     ROS_ERROR("%s", msg.c_str());
 }
 
-void MoveBasic::moveSmooth()
-{
-    sendCmd(linear_velocity, 0);
-    ros::Duration(3).sleep;
-    try
-    {
-        geometry_msgs::Twist twist = ros::topic::waitForMessage<geometry_msgs::Twist>("rover_twsit", ros::Duration(2));
-    }
-    catch(std::runtime_error ex)
-    {
-        // No new move base command so stop moving 
-        sendCmd(0, 0);
-    }
-}
 
 int MoveBasic::getNewGoal()
 {
@@ -377,18 +405,6 @@ int MoveBasic::getNewGoal()
 
     ROS_INFO("%d",goalId);
     return goalId;
-    // rospy.loginfo("Processing goal")
-    // timeout = rospy.Time.now() + rospy.Duration(5)
-    // while timeout > rospy.Time.now():
-    //     cg = self._as.current_goal.get_goal()
-    //     ng = self._as.next_goal.get_goal()
-    //     hasGoal = self._as.is_new_goal_available()
-    //     rospy.loginfo("current:{:>2} Next:{:>2} Avaliable:{}".format(cg.id.data, ng.id.data, hasGoal))
-    //     # Preempt the previous Goal
-    //     if hasGoal:
-    //         self._as.accept_new_goal()
-    //         rospy.loginfo("Accepting new goal")
-    //     rospy.sleep(0.2)
 }
 
 
@@ -851,9 +867,7 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
             ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
             velocity = 0;
             done = true;
-            if (axis == "Y"){
-                std::thread continue_move(moveSmooth, this);
-            }
+            sendCmd(rotation, velocity);
             return done;
         }
         // ROS_INFO("Velocity %f", velocity* sign);
