@@ -9,12 +9,11 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from actionlib import SimpleActionClient, SimpleActionServer
 import tf2_ros
 from fiducial_msgs.msg import FiducialTransform, FiducialTransformArray
-from mobile_cmd_control.msg import move_commandAction, move_commandResult, move_commandGoal, move_smoothAction, move_smoothGoal, \
-mobile_wait, mobile_waitRequest
+from mobile_cmd_control.msg import move_commandAction, move_commandResult, move_commandGoal, move_smoothAction, move_smoothGoal 
+from mobile_cmd_control.srv import mobile_wait, mobile_waitRequest
 
 class ARMove(object):
     def __init__(self):
-        rospy.on_shutdown(self.clear_goals)
         self.BASE_CAMERA_OFFSET = 0.31
         self.target_id = 0
         ns = "/move_base"
@@ -28,6 +27,7 @@ class ARMove(object):
         self.Y_server.wait_for_server()
         self.RZ_server.wait_for_server()
         self.move_smooth_ac.wait_for_server()
+
         
         self.tfBuffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tfBuffer)
@@ -44,6 +44,8 @@ class ARMove(object):
         self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
         # Publisher to Modbus Server to write register to start UR3
         self.ur3_start_pub = rospy.Publisher("ur3/command_state", Int32MultiArray, queue_size=10)
+        rospy.on_shutdown(self.full_shutdown)
+
 
         
     def wait_for_id(self, target_id,use_smooth=False,timeout=30):
@@ -122,7 +124,7 @@ class ARMove(object):
         if move_goal.use_marker.data:
             # AR task
             # self.id_list = list(range(move_goal.id.data + 1))
-            self.id_list = [1,2]
+            self.id_list = [0,1]
             for id in self.id_list:
                 self.ar_follow(id) 
                 if self.enable_ur3:
@@ -148,7 +150,7 @@ class ARMove(object):
         
     def wait_ur3(self):
         # UR3 Moving
-        self.move_client.cancel_all_goals()
+        self.clear_goals()
         self.ur3_start_pub.publish(Int32MultiArray(data = [1,0]))
         #Need to check if UR is Moving 
         wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(40)))
@@ -156,8 +158,17 @@ class ARMove(object):
             rospy.loginfo("UR still moving")
             # Stop the UR3
             self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
-        rospy.loginfo("ur_done")
-        # Tel UR3 to Stop
+            wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(5)))
+            if wait.result == False:
+                rospy.loginfo("Stop command fail and abort goal")
+                self.clear_goals()
+                self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+                self.self.ar_move_as.set_aborted()
+            else:
+                rospy.loginfo("Stop command success")
+        else:
+            rospy.loginfo("UR_done")
+        # keep UR3 in Stop
         self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
         rospy.sleep(2.0)
         
@@ -282,6 +293,11 @@ class ARMove(object):
         self.Y_server.cancel_all_goals()
         self.RZ_server.cancel_all_goals()
         rospy.loginfo("Goals cleared")
+
+    def full_shutdown(self):
+        self.clear_goals()
+        if self.ar_move_as.is_active():
+            self.ar_move_as.set_aborted()
 
     def stop(self):
         self.clear_goals()
