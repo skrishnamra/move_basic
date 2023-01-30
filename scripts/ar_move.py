@@ -127,18 +127,7 @@ class ARMove(object):
                 self.ar_follow(id) 
                 if self.enable_ur3:
                     # Calls service which Blocks mobile base if UR3 is not done with movement 
-                    # UR Moving
-                    self.move_client.cancel_all_goals()
-                    self.ur3_start_pub.publish(Int32MultiArray(data = [1,0]))
-                    #Need to check if UR is Moving 
-                    wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(40)))
-                    if wait.result == False:
-                        rospy.loginfo("UR still moving")
-                        self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
-                    rospy.loginfo("ur_done")
-                    # Tel UR3 to Stop
-                    self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
-                    rospy.sleep(2.0)
+                    self.wait_ur3()
                 if id is not self.id_list[-1]:
                     rospy.sleep(1)
                     self.move_x(self.move_offset([-0.5,0,0]))
@@ -157,7 +146,20 @@ class ARMove(object):
         # move_goal.target_pose.pose.position.x += 0.4
         # self.move_x(move_goal)
         
-        
+    def wait_ur3(self):
+        # UR3 Moving
+        self.move_client.cancel_all_goals()
+        self.ur3_start_pub.publish(Int32MultiArray(data = [1,0]))
+        #Need to check if UR is Moving 
+        wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(40)))
+        if wait.result == False:
+            rospy.loginfo("UR still moving")
+            # Stop the UR3
+            self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+        rospy.loginfo("ur_done")
+        # Tel UR3 to Stop
+        self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+        rospy.sleep(2.0)
         
     def init_move_goal(self, frame="map"):
         pose = PoseStamped(pose = Pose(Point(), Quaternion(0,0,0,1)))
