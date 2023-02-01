@@ -15,7 +15,6 @@ from mobile_cmd_control.srv import mobile_wait, mobile_waitRequest
 class ARMove(object):
     def __init__(self):
         self.BASE_CAMERA_OFFSET = 0.31
-        self.target_id = 0
         ns = "/move_base"
         self.RZ_server = SimpleActionClient(ns + '/RZ', MoveBaseAction)
         self.Y_server = SimpleActionClient(ns + '/Y', MoveBaseAction)
@@ -51,6 +50,9 @@ class ARMove(object):
     def wait_for_id(self, target_id,use_smooth=False,timeout=30):
         time_limit = rospy.Time.now() + rospy.Duration(timeout)
         while(rospy.Time(timeout) < rospy.Time.now()):
+            if self.ar_move_as.is_preempt_requested():
+                # If the server is preempted need to exit loop
+                break
             try:
                 msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=0.1)
                 for f in msg.transforms:
@@ -61,9 +63,10 @@ class ARMove(object):
                     
             except:
                 rospy.logdebug("Fiducial_transform not published")
-                rospy.sleep(0.05)
+                rospy.sleep(0.1)
                 pass
-           
+        self.stop()
+        
             
     def ar_follow(self,target_id):  
         use_search = True
@@ -75,6 +78,11 @@ class ARMove(object):
                     use_search = False
                     if target_id == self.id_list[0]:
                         self.move_rz(self.rotate_to_angle([0,0,0]))
+                        goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                        self.move_y(goal)
+                    else:
+                        goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                        self.move_y(goal)
                         
         except:
             rospy.loginfo("Searching for AR Marker")
@@ -89,7 +97,6 @@ class ARMove(object):
                 # Move towards the AR Board 
                 now = rospy.Time.now()
                 goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
-                self.target_id = target_id
                 if target_id == self.id_list[0]:
                     rospy.sleep(0.2)
                     self.X_server.cancel_goals_at_and_before_time(now)
@@ -112,27 +119,44 @@ class ARMove(object):
                     self.move_rz(self.rotate_to_angle([0,0,0]))
                 # Move towards the AR Board 
                 goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
-                self.target_id = target_id
                 self.move_y(goal)
-            rospy.sleep(3)
+
+        rospy.sleep(3)
         goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
         self.move_x(goal) 
         
         
     def move(self, move_goal):        
         # AR Move
+        # while True:
+        #     rospy.loginfo("ok")
+        #     rospy.sleep(0.5)
+        #     if self.ar_move_as.is_preempt_requested():
+        #         rospy.loginfo("Stop here")
+        #         break
+        # if self.ar_move_as.is_preempt_requested():
+        #     self.ar_move_as.set_preempted() 
+        # rospy.sleep(3)
+        # rospy.loginfo("print here")
         if move_goal.use_marker.data:
             # AR task
-            # self.id_list = list(range(move_goal.id.data + 1))
-            self.id_list = [0,1]
+            self.id_list = list(range(move_goal.id.data + 1))
+
+            rospy.loginfo(self.id_list)
+            if move_goal.id.data == 99:
+                self.id_list = [0,1,2,99]
+            
             for id in self.id_list:
                 self.ar_follow(id) 
                 if self.enable_ur3:
                     # Calls service which Blocks mobile base if UR3 is not done with movement 
-                    self.wait_ur3()
+                    if id is not 0 or id is not 99:
+                        self.wait_ur3() #Dont move if it is the first and last marker 
+                # Move back if it is not the last ID
                 if id is not self.id_list[-1]:
                     rospy.sleep(1)
-                    self.move_x(self.move_offset([-0.5,0,0]))
+                    # Move back to center of the two markers
+                    self.move_center()
                 rospy.sleep(2)
         # Normal Move
         else:
@@ -144,6 +168,7 @@ class ARMove(object):
             if move_goal.enable_x.data:
                 self.move_x(self.move_offset(move_goal.target_pose))
         self.ar_move_as.set_succeeded()
+        
         # move_goal = self.init_move_goal(frame="base_link")
         # move_goal.target_pose.pose.position.x += 0.4
         # self.move_x(move_goal)
@@ -163,7 +188,7 @@ class ARMove(object):
                 rospy.loginfo("Stop command fail and abort goal")
                 self.clear_goals()
                 self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
-                self.self.ar_move_as.set_aborted()
+                # self.ar_move_as.set_aborted()
             else:
                 rospy.loginfo("Stop command success")
         else:
@@ -287,6 +312,18 @@ class ARMove(object):
             self.RZ_server.wait_for_result()
         rospy.loginfo("finish RZ")
         rospy.sleep(1)
+
+    def move_center(self):
+        try:
+            d_front = rospy.wait_for_message("/camera_front/distance", 1)
+            d_rear = rospy.wait_for_message("/camera_rear/distance", 1)
+            d_center =  float(d_front.data + d_rear.data)/2 - 1
+            d_back = -d_center
+        except:
+            rospy.loginfo("Cannot find front or rear distance")
+            d_back = -0.5
+        self.move_x(self.move_offset([d_back,0,0]))
+        
         
     def clear_goals(self):
         self.X_server.cancel_all_goals()
@@ -301,7 +338,10 @@ class ARMove(object):
 
     def stop(self):
         self.clear_goals()
+        rospy.sleep(0.4)
         rospy.loginfo("Preempt Request")
+        self.ar_move_as.set_preempted()
+        self.clear_goals()
 
 
     def transform_stamped_to_pq(self,trans):
