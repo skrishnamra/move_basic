@@ -271,6 +271,7 @@ MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros:
 
     if(axis == "Y")
     {
+    minLinearVelocity = minLinearVelocity * 2.0;
     smooth_actionServer.reset(new MoveSmoothActionServer(actionNh, action_name,
 	boost::bind(&MoveBasic::move_smoothCB, this, _1) ,false));
     smooth_actionServer->start();
@@ -294,8 +295,8 @@ void MoveBasic::move_smoothCB(const mobile_cmd_control::move_smoothGoalConstPtr 
     }
 
     sleep(sleep_t);
-    ROS_INFO("%f", sleep_t);
-    ROS_INFO(axis.c_str());
+    // ROS_INFO("%f", sleep_t);
+    // ROS_INFO(axis.c_str());
 
     // See if another node is publishing the next command
     std::string topic_name = "rover_twist";
@@ -527,8 +528,8 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
     {
        double x, y, yaw;
        getPose(goalInBase, x, y, yaw);
-       ROS_INFO("MoveBasic: Goal in %s  %f %f %f", baseFrame.c_str(),
-             x, y, rad2deg(yaw));
+    //    ROS_INFO("MoveBasic: Goal in %s  %f %f %f", baseFrame.c_str(),
+            //  x, y, rad2deg(yaw));
     }
 
     tf2::Vector3 linear = goalInBase.getOrigin();
@@ -650,6 +651,7 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
 
     bool done = false;
     ros::Rate r(50);
+    bool firstRotation = true;
 
     while (!done && ros::ok()) {
         ros::spinOnce();
@@ -664,7 +666,7 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
         getPose(poseDriving, x, y, currentYaw);
 
         double angleRemaining = requestedYaw - currentYaw;
-        ROS_INFO("requested: %f, current:%f", requestedYaw, currentYaw);
+        // ROS_INFO("requested: %f, current:%f", requestedYaw, currentYaw);
         normalizeAngle(angleRemaining);
 
         // double obstacle = collision_checker->obstacle_angle(angleRemaining > 0);
@@ -687,9 +689,17 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
         }
 
         ROS_INFO("%d", oscillations);
-        ROS_INFO("remain:%f", angleRemaining);
+        // ROS_INFO("remain:%f", angleRemaining);
         ROS_INFO("tolerance: %f", rad2deg(angularTolerance));
 
+        if (!firstRotation){
+            if (std::abs(angleRemaining) < angularTolerance*2) {
+                ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
+                velocity = 0;
+                done = true;
+            }
+            firstRotation = false;
+        }
         if (std::abs(angleRemaining) < angularTolerance || oscillations > 2) {
             ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
             velocity = 0;
@@ -750,7 +760,6 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
         remaining = goalInBase.getOrigin();
         double distRemaining = sqrt(remaining.x() * remaining.x() + remaining.y() * remaining.y());
         // Change according to axis 
-        ROS_INFO(axis.c_str());
         if (axis == "X"){
             distRemaining = abs(remaining.x());
             if(remaining.x() < 0.0){
@@ -769,7 +778,6 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
                 sign = 1;
             }
         }
-        ROS_INFO("%f", sign);
 
         // PID lateral control to keep robot on path
         double rotation = 0.0;
@@ -803,12 +811,12 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
                                                         	forwardLeft,
                                                         	forwardRight);
 	}
-        ROS_INFO("%f", distRemaining);
+        // ROS_INFO("%f", distRemaining);
         double velocity = std::max(minLinearVelocity,
 		std::min(std::min(std::abs(obstacleDist), std::abs(distRemaining/2)),
                 	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
 								    std::min(std::abs(obstacleDist), std::abs(distRemaining))))));
-        ROS_INFO("Vel:%f", velocity);
+        // ROS_INFO("Vel:%f", velocity);
 
         bool obstacleDetected = (obstacleDist < forwardObstacleThreshold);
         // Disable obstacle avoidance
