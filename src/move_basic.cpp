@@ -271,7 +271,7 @@ MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros:
 
     if(axis == "Y")
     {
-    minLinearVelocity = minLinearVelocity * 2.3;
+    minLinearVelocity = minLinearVelocity * 6.0;
     smooth_actionServer.reset(new MoveSmoothActionServer(actionNh, action_name,
 	boost::bind(&MoveBasic::move_smoothCB, this, _1) ,false));
     smooth_actionServer->start();
