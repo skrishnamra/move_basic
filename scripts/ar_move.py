@@ -180,7 +180,7 @@ class ARMove(object):
                 self.move_rz(self.rotate_offset(move_goal.target_pose))
             if move_goal.enable_y.data:  
                 self.move_y(self.move_offset(move_goal.target_pose))
-                self.move_smooth(direction=3)
+                #self.move_smooth(direction=3)
             if move_goal.enable_x.data:
                 self.move_x(self.move_offset(move_goal.target_pose))
         self.ar_move_as.set_succeeded()
