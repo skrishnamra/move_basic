@@ -40,32 +40,39 @@ class ARMove(object):
 
 
         # UR3 - Wait for Output Register on UR3 using client 
-        rospy.wait_for_service('ur3/modbus_wait')
-        self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
-        # Publisher to Modbus Server to write register to start UR3
-        self.ur3_start_pub = rospy.Publisher("ur3/command_state", Int32MultiArray, queue_size=10)
+        if self.enable_ur3:
+            rospy.wait_for_service('ur3/modbus_wait')
+            self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
+            # Publisher to Modbus Server to write register to start UR3
+            self.ur3_start_pub = rospy.Publisher("ur3/command_state", Int32MultiArray, queue_size=10)
         rospy.on_shutdown(self.full_shutdown)
 
+        self.center_distance = rospy.get_param("yasui/factory_length",2.5)/2
 
         
     def wait_for_id(self, target_id,use_smooth=False,timeout=30):
         time_limit = rospy.Time.now() + rospy.Duration(timeout)
-        while(rospy.Time(timeout) < rospy.Time.now()):
+        while(rospy.Time.now()<time_limit):
             if self.ar_move_as.is_preempt_requested():
                 # If the server is preempted need to exit loop
+                rospy.loginfo("preempting")
                 break
             try:
-                msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=0.1)
+                # If Jetson Orin -> timeout = 0.1s
+                msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=0.25)
                 for f in msg.transforms:
+                    rospy.loginfo("{}".format(f.fiducial_id))
                     if target_id == f.fiducial_id:
+                        rospy.loginfo("found id")
                         if not use_smooth:
                             self.clear_goals()
                         return 
                     
             except:
-                rospy.logdebug("Fiducial_transform not published")
+                rospy.loginfo("Fiducial_transform not published")
                 rospy.sleep(0.1)
                 pass
+        rospy.loginfo("!!!!!!!!!!!!!!!!!!!!!!!!")
         self.stop()
         
             
@@ -155,20 +162,21 @@ class ARMove(object):
                     if not id ==0 and not id==99:
                         rospy.loginfo("executing id:{}".format(id))
                         self.wait_ur3() #Dont move if it is the first and last marker 
+                else:
+                    rospy.sleep(1.0)
                 # Move back if it is not the last ID
                 rospy.sleep(1)
                 # Move back to center of the two markers
-                offset = -0.5   
                 try:
                     d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
                     d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
                     d_center =  -(float(d_front.data + d_rear.data) +  self.ROBOT_LENGTH)/2 
                     rospy.loginfo("Distance is 0")
                     if d_front.data ==0 or d_rear.data == 0:
-                        d_center = -2.5
+                        d_center = -self.center_distance
                 except:
                     rospy.loginfo("Cannot find front or rear distance")
-                    d_center = -2.5
+                    d_center = -self.center_distance
                 goal = self.AR_offset(id, [d_center,0.0,0.0])  
                 self.move_x(goal)
 
@@ -233,7 +241,7 @@ class ARMove(object):
             
     def AR_offset(self, id, offset):
         try:
-            trans = self.tfBuffer.lookup_transform('map','ar_board_' + str(id),rospy.Time(), rospy.Duration(1.0))
+            trans = self.tfBuffer.lookup_transform('map','front/ar_board_' + str(id),rospy.Time(), rospy.Duration(1.0))
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
             raise
 
@@ -314,6 +322,7 @@ class ARMove(object):
         rospy.sleep(1)
         
     def search_y(self,goal,id, use_smooth=False):
+        rospy.loginfo("search:{}".format(id))
         self.target_pub.publish(goal.target_pose)
         self.Y_server.send_goal(goal)
         self.wait_for_id(id, use_smooth=use_smooth)
@@ -329,16 +338,16 @@ class ARMove(object):
         rospy.loginfo("finish RZ")
         rospy.sleep(1)
 
-    def move_center(self):
-        try:
-            d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
-            d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
-            d_center =  (float(d_front.data + d_rear.data) +  self.ROBOT_LENGTH)/2 - 1
-            d_back = -d_center
-        except:
-            rospy.loginfo("Cannot find front or rear distance")
-            d_back = -0.5
-        self.move_x(self.move_offset([d_back,0,0]))
+    # def move_center(self):
+    #     try:
+    #         d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
+    #         d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
+    #         d_center =  (float(d_front.data + d_rear.data) +  self.ROBOT_LENGTH)/2 - 1
+    #         d_back = -d_center
+    #     except:
+    #         rospy.loginfo("Cannot find front or rear distance")
+    #         d_back = -0.5
+    #     self.move_x(self.move_offset([d_back,0,0]))
         
         
     def clear_goals(self):
