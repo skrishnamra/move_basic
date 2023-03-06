@@ -120,6 +120,7 @@ class MoveBasic {
     void executeAction(const move_base_msgs::MoveBaseGoalConstPtr& goal);
     void drawLine(double x0, double y0, double x1, double y1);
     void sendCmd(double angular, double linear);
+    void sendCmdXY(double angular, double linearX, double linearY);
     void abortGoal(const std::string msg);
     int getNewGoal();
 
@@ -136,6 +137,8 @@ class MoveBasic {
     void run();
 
     bool moveLinear(tf2::Transform& goalInDriving,
+                    const std::string& drivingFrame);
+    bool approachLinear(tf2::Transform& goalInDriving,
                     const std::string& drivingFrame);
     bool rotate(double requestedYaw,
                 const std::string& drivingFrame);
@@ -271,7 +274,7 @@ MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros:
 
     if(axis == "Y")
     {
-        minLinearVelocity = minLinearVelocity * 6.0;
+        minLinearVelocity = 0.18;
         smooth_actionServer.reset(new MoveSmoothActionServer(actionNh, action_name,
         boost::bind(&MoveBasic::move_smoothCB, this, _1) ,false));
         smooth_actionServer->start();
@@ -564,19 +567,26 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
             return;
         }
     }
-    sleep(localizationLatency);
 
     // Do linear portion of the goal
-    if(!(axis=="RZ")){
+    if((axis=="X") || (axis=="Y")){
         // Setting Target velocity parameter
         nh.getParam("/move_base/move_basic/min_linear_velocity", minLinearVelocity);
         nh.getParam("/move_base/move_basic/max_linear_velocity", maxLinearVelocity);
         if (!moveLinear(goalInDriving, drivingFrame)) {
             return;
         }
-    sleep(localizationLatency);
     }
 
+    if(axis=="XY"){
+        // Setting Target velocity parameter
+        nh.getParam("/move_base/move_basic/min_linear_velocity", minLinearVelocity);
+        nh.getParam("/move_base/move_basic/max_linear_velocity", maxLinearVelocity);
+        if (!approachLinear(goalInDriving, drivingFrame)) {
+            return;
+        }
+    }
+    sleep(localizationLatency);
 
     actionServer->setSucceeded();
 }
@@ -601,6 +611,23 @@ void MoveBasic::sendCmd(double angular, double linear)
     else if(axis == "RZ"){
         msg.angular.z = angular;
     }
+
+    cmdPub.publish(msg);
+}
+
+// Send a motion command in 2D
+
+void MoveBasic::sendCmdXY(double angular, double linearX, double linearY)
+{
+    if (stop) {
+        angular = 0;
+        linearX = 0;
+        linearY = 0;
+    }
+    geometry_msgs::Twist msg;
+    // Change according to axis
+    msg.linear.x = linearX ;
+    msg.linear.y = linearY;
 
     cmdPub.publish(msg);
 }
@@ -692,14 +719,14 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
         // ROS_INFO("remain:%f", angleRemaining);
         ROS_INFO("tolerance: %f", rad2deg(angularTolerance));
 
-        if (!firstRotation){
-            if (std::abs(angleRemaining) < angularTolerance*2) {
-                ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
-                velocity = 0;
-                done = true;
-            }
-            firstRotation = false;
-        }
+        // if (!firstRotation){
+        //     if (std::abs(angleRemaining) < angularTolerance*2) {
+        //         ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
+        //         velocity = 0;
+        //         done = true;
+        //     }
+        //     firstRotation = false;
+        // }
         if (std::abs(angleRemaining) < angularTolerance || oscillations > 2) {
             ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
             velocity = 0;
@@ -759,6 +786,8 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
         goalInBase = poseDriving * goalInDriving;
         remaining = goalInBase.getOrigin();
         double distRemaining = sqrt(remaining.x() * remaining.x() + remaining.y() * remaining.y());
+
+
         // Change according to axis 
         if (axis == "X"){
             distRemaining = abs(remaining.x());
@@ -886,6 +915,110 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
     return done;
 }
 
+bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
+                           const std::string& drivingFrame)
+{
+    tf2::Transform poseDriving;
+    if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
+         abortGoal("MoveBasic: Cannot determine robot pose for linear approach");
+         return false;
+    }
+    tf2::Transform goalInBase = poseDriving * goalInDriving;
+    tf2::Vector3 remaining = goalInBase.getOrigin();
+
+    remaining.setZ(0);
+    double requestedDistance = remaining.length();
+
+    bool pausingForObstacle = false;
+    ros::Time obstacleTime;
+    ros::Duration runawayTimeout(runawayTimeoutSecs);
+    ros::Time last = ros::Time::now();
+
+    // For lateral control
+    double rotation = 0.0;
+    double lateralIntegral = 0.0;
+    double lateralError = 0.0;
+    double prevLateralError = 0.0;
+    double lateralDiff = 0.0;
+    double sign;
+    double signX;
+    double signY;
+
+
+
+    bool done = false;
+    ros::Rate r(50);
+
+    while (!done && ros::ok()) {
+        ros::spinOnce();
+        r.sleep();
+
+        if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
+             ROS_WARN("MoveBasic: Cannot determine robot pose for linear approach");
+             return false;
+        }
+        goalInBase = poseDriving * goalInDriving;
+        remaining = goalInBase.getOrigin();
+        double distRemaining = sqrt(remaining.x() * remaining.x() + remaining.y() * remaining.y());
+        // Change according to axis 
+        double distRemainingX = abs(remaining.x());
+        if(remaining.x() < 0.0){
+            signX = -1;
+        }
+        else{
+            signX = 1;
+        }
+
+        double distRemainingY = abs(remaining.y());
+        if(remaining.y() < 0.0){
+            signY = -1;
+        }
+        else{
+            signY = 1;
+        }
+
+        double obstacleDist = 99999;
+
+
+        ROS_INFO("%f", distRemainingX);
+        double velocityX = std::max(minLinearVelocity,
+		std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingX/2)),
+                	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
+								    std::min(std::abs(obstacleDist), std::abs(distRemainingX))))));
+
+        ROS_INFO("%f", distRemainingY);
+        double velocityY = std::max(minLinearVelocity,
+		std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingY/2)),
+                	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
+								    std::min(std::abs(obstacleDist), std::abs(distRemainingY))))));
+        // ROS_INFO("Vel:%f", velocity);
+
+
+        // Abort Checks
+        if (actionServer->isPreemptRequested()) {
+            ROS_INFO("MoveBasic: Stopping move due to preempt");
+            actionServer->setPreempted();
+            sendCmdXY(0, 0, 0);
+            return false;
+        }
+
+        /* Finish Check */
+
+        if (distRemaining < linearTolerance) {
+            ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
+            velocityX = 0;
+            velocityY = 0;
+            done = true;
+            sendCmdXY(rotation, velocityX, velocityY);
+            return done;
+        }
+        sendCmdXY(rotation, velocityX * signX, velocityY * signY);
+    }
+
+    return done;
+}
+
+
 
 int main(int argc, char ** argv) {
     ros::init(argc, argv, "move_basic");
@@ -893,9 +1026,12 @@ int main(int argc, char ** argv) {
     MoveBasic mb_nodeX(nh,"X");
     MoveBasic mb_nodeY(nh,"Y");
     MoveBasic mb_nodeRZ(nh, "RZ");
+    MoveBasic mb_nodeXY(nh, "XY");
     mb_nodeX.run();
     mb_nodeY.run();
     mb_nodeRZ.run();
+    mb_nodeXY.run();
+
 
     return 0;
 }

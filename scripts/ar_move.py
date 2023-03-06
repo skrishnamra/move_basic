@@ -2,7 +2,7 @@
 
 import rospy
 from geometry_msgs.msg import PoseStamped, Quaternion, Point, Pose
-from std_msgs.msg import Float32, Int32, Int32MultiArray
+from std_msgs.msg import Float32, Int32, Int32MultiArray, ByteMultiArray
 from tf.transformations import quaternion_from_euler, quaternion_multiply
 import numpy as np 
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
@@ -20,11 +20,13 @@ class ARMove(object):
         self.RZ_server = SimpleActionClient(ns + '/RZ', MoveBaseAction)
         self.Y_server = SimpleActionClient(ns + '/Y', MoveBaseAction)
         self.X_server = SimpleActionClient(ns + '/X', MoveBaseAction)
+        self.XY_server = SimpleActionClient(ns + '/XY', MoveBaseAction)
         self.move_smooth_ac = SimpleActionClient(ns + '/move_smooth', move_smoothAction)
         self.clear_goals()
         self.target_pub = rospy.Publisher(ns + "/goal", PoseStamped, queue_size=10)
         self.X_server.wait_for_server()
         self.Y_server.wait_for_server()
+        self.XY_server.wait_for_server()
         self.RZ_server.wait_for_server()
         self.move_smooth_ac.wait_for_server()
 
@@ -33,6 +35,7 @@ class ARMove(object):
         self.listener = tf2_ros.TransformListener(self.tfBuffer)
         self.ar_move_as = SimpleActionServer("ar_move", move_commandAction, self.move, auto_start=False)
         self.ar_move_as.start()
+        rospy.sleep(2)
         self.ar_move_as.register_preempt_callback(self.stop)
         self.enable_ur3 = rospy.get_param("~enable_ur3", False)
         rospy.loginfo(self.enable_ur3)
@@ -44,22 +47,24 @@ class ARMove(object):
             rospy.wait_for_service('ur3/modbus_wait')
             self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
             # Publisher to Modbus Server to write register to start UR3
-            self.ur3_start_pub = rospy.Publisher("ur3/command_state", Int32MultiArray, queue_size=10)
+            self.ur3_start_pub = rospy.Publisher("ur3/command_state", ByteMultiArray, queue_size=10)
         rospy.on_shutdown(self.full_shutdown)
 
-        self.center_distance = rospy.get_param("yasui/factory_length",2.5)/2
+        self.center_distance = rospy.get_param("yasui/factory_length",3.0)/2
 
         
     def wait_for_id(self, target_id,use_smooth=False,timeout=30):
         time_limit = rospy.Time.now() + rospy.Duration(timeout)
         while(rospy.Time.now()<time_limit):
-            if self.ar_move_as.is_preempt_requested():
-                # If the server is preempted need to exit loop
-                rospy.loginfo("preempting")
-                break
+            # if self.ar_move_as.is_preempt_requested():
+            #     # If the server is preempted need to exit loop
+            #     rospy.loginfo("commencing preempting")
+            #     self.stop()
+            #     self.ar_move_as.set_preempted()
+            #     break
             try:
                 # If Jetson Orin -> timeout = 0.1s
-                msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=0.25)
+                msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=0.6)
                 for f in msg.transforms:
                     rospy.loginfo("{}".format(f.fiducial_id))
                     if target_id == f.fiducial_id:
@@ -70,15 +75,29 @@ class ARMove(object):
                     
             except:
                 rospy.loginfo("Fiducial_transform not published")
-                rospy.sleep(0.1)
+                rospy.sleep(0.2)
                 pass
-        rospy.loginfo("!!!!!!!!!!!!!!!!!!!!!!!!")
         self.stop()
         
             
     def ar_follow(self,target_id):  
         use_search = True
         self.use_smooth = True
+        # Determine the search direction
+        try:
+            trans = self.tfBuffer.lookup_transform('base_link','front/ar_board_' + str(target_id),rospy.Time(), rospy.Duration(4.0))
+            if trans.transform.translation.y <= 0:
+                search_direction = -1
+                self.move_direction = 2
+            else:
+                search_direction = 1
+                self.move_direction = 3
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            search_direction = 1
+            self.move_direction = 3
+            rospy.loginfo("use_default_direction")
+            pass
+
         try:
             msg = rospy.wait_for_message("/camera_front/fiducial_transforms", FiducialTransformArray, timeout=2.0)
             for f in msg.transforms:
@@ -97,8 +116,10 @@ class ARMove(object):
 
         # Move towards the ID if not already seen 
         # Search direction 1:Left -1:Right 
+
+
+        
         if use_search:
-            search_direction = 1
             search_distance = 2
             self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id, use_smooth=self.use_smooth)
             if self.use_smooth: 
@@ -109,6 +130,7 @@ class ARMove(object):
                     rospy.sleep(0.2)
                     self.X_server.cancel_goals_at_and_before_time(now)
                     self.Y_server.cancel_goals_at_and_before_time(now)
+                    self.XY_server.cancel_goals_at_and_before_time(now)
                     self.RZ_server.cancel_goals_at_and_before_time(now)
                     rospy.sleep(1.5)
                     self.move_rz(self.rotate_to_angle([0,0,0]))
@@ -116,12 +138,16 @@ class ARMove(object):
                     self.move_y(goal)
                 else:
                     self.move_y(goal, blocking=False)
-                    self.move_smooth(direction=3)
+                    self.move_smooth(self.move_direction)
                     rospy.sleep(0.3)
                     self.X_server.cancel_goals_at_and_before_time(now)
                     self.Y_server.cancel_goals_at_and_before_time(now)
+                    self.XY_server.cancel_goals_at_and_before_time(now)
                     self.RZ_server.cancel_goals_at_and_before_time(now)
                     self.Y_server.wait_for_result()
+                    rospy.sleep(1)
+                    self.move_rz(self.rotate_to_angle([0,0,0]))
+                    rospy.sleep(1)
             else:
                 if target_id == self.id_list[0]:
                     self.move_rz(self.rotate_to_angle([0,0,0]))
@@ -129,7 +155,7 @@ class ARMove(object):
                 goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
                 self.move_y(goal)
 
-        rospy.sleep(3)
+        rospy.sleep(1.0)
         goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
         if not target_id == 0 and not target_id ==99:
             self.move_x(goal) 
@@ -163,9 +189,9 @@ class ARMove(object):
                         rospy.loginfo("executing id:{}".format(id))
                         self.wait_ur3() #Dont move if it is the first and last marker 
                 else:
-                    rospy.sleep(1.0)
+                    rospy.sleep(0.5)
                 # Move back if it is not the last ID
-                rospy.sleep(1)
+                rospy.sleep(0.5)
                 # Move back to center of the two markers
                 try:
                     d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
@@ -181,7 +207,7 @@ class ARMove(object):
                 self.move_x(goal)
 
  
-                rospy.sleep(2)
+                rospy.sleep(0.5)
         # Normal Move
         else:
             if move_goal.enable_rz.data:
@@ -200,26 +226,26 @@ class ARMove(object):
     def wait_ur3(self):
         # UR3 Moving
         self.clear_goals()
-        self.ur3_start_pub.publish(Int32MultiArray(data = [1,0]))
+        self.ur3_start_pub.publish(ByteMultiArray(data = [1,0]))
         #Need to check if UR is Moving 
         wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(40)))
         if wait.result == False:
             rospy.loginfo("UR still moving")
             # Stop the UR3
-            self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+            self.ur3_start_pub.publish(ByteMultiArray(data = [0,1]))
             wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(5)))
             if wait.result == False:
                 rospy.loginfo("Stop command fail and abort goal")
                 self.clear_goals()
-                self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
+                self.ur3_start_pub.publish(ByteMultiArray(data = [0,1]))
                 # self.ar_move_as.set_aborted()
             else:
                 rospy.loginfo("Stop command success")
         else:
             rospy.loginfo("UR_done")
         # keep UR3 in Stop
-        self.ur3_start_pub.publish(Int32MultiArray(data = [0,1]))
-        rospy.sleep(2.0)
+        self.ur3_start_pub.publish(ByteMultiArray(data = [0,1]))
+        rospy.sleep(0.5)
         
     def init_move_goal(self, frame="map"):
         pose = PoseStamped(pose = Pose(Point(), Quaternion(0,0,0,1)))
@@ -311,7 +337,7 @@ class ARMove(object):
         if blocking:
             self.X_server.wait_for_result()
         rospy.loginfo("finish X")
-        rospy.sleep(1)
+        rospy.sleep(0.5)
         
     def move_y(self,goal,blocking=True):
         self.target_pub.publish(goal.target_pose)
@@ -319,7 +345,15 @@ class ARMove(object):
         if blocking:
             self.Y_server.wait_for_result()
         rospy.loginfo("finish Y")
-        rospy.sleep(1)
+        rospy.sleep(0.5)
+    
+    def move_xy(self, goal,blocking=True):
+        self.target_pub.publish(goal.target_pose)
+        self.XY_server.send_goal(goal)
+        if blocking:
+            self.XY_server.wait_for_result()
+        rospy.loginfo("finish XY")
+        rospy.sleep(0.5)
         
     def search_y(self,goal,id, use_smooth=False):
         rospy.loginfo("search:{}".format(id))
@@ -336,7 +370,7 @@ class ARMove(object):
         if blocking:
             self.RZ_server.wait_for_result()
         rospy.loginfo("finish RZ")
-        rospy.sleep(1)
+        rospy.sleep(0.5)
 
     # def move_center(self):
     #     try:
@@ -353,6 +387,7 @@ class ARMove(object):
     def clear_goals(self):
         self.X_server.cancel_all_goals()
         self.Y_server.cancel_all_goals()
+        self.XY_server.cancel_all_goals()
         self.RZ_server.cancel_all_goals()
         rospy.loginfo("Goals cleared")
 
@@ -363,7 +398,8 @@ class ARMove(object):
 
     def stop(self):
         self.clear_goals()
-        rospy.sleep(0.4)
+        self.move_smooth_ac.cancel_all_goals()
+        rospy.sleep(0.5)
         rospy.loginfo("Preempt Request")
         self.ar_move_as.set_preempted()
         self.clear_goals()
