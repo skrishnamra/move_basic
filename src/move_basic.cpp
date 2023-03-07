@@ -628,6 +628,7 @@ void MoveBasic::sendCmdXY(double angular, double linearX, double linearY)
     // Change according to axis
     msg.linear.x = linearX ;
     msg.linear.y = linearY;
+    msg.angular.z = angular;
 
     cmdPub.publish(msg);
 }
@@ -930,6 +931,9 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
     double requestedDistance = remaining.length();
 
     bool pausingForObstacle = false;
+    bool doneX = false;
+    bool doneY= false;
+    bool doneRZ = false;
     ros::Time obstacleTime;
     ros::Duration runawayTimeout(runawayTimeoutSecs);
     ros::Time last = ros::Time::now();
@@ -943,6 +947,8 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
     double sign;
     double signX;
     double signY;
+    double requestedYaw = 0;
+    double x, y, currentYaw;
 
 
 
@@ -953,66 +959,114 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
         ros::spinOnce();
         r.sleep();
 
-        if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
-             ROS_WARN("MoveBasic: Cannot determine robot pose for linear approach");
-             return false;
+        // Fixing the Yaw angle 
+
+        tf2::Transform poseDriving;
+        if (!getTransform(baseFrame, drivingFrame, poseDriving)) {
+            ROS_INFO("MoveBasic: Cannot fix robot pose for rotation");
         }
-        goalInBase = poseDriving * goalInDriving;
-        remaining = goalInBase.getOrigin();
-        double distRemaining = sqrt(remaining.x() * remaining.x() + remaining.y() * remaining.y());
-        // Change according to axis 
-        double distRemainingX = abs(remaining.x());
-        if(remaining.x() < 0.0){
-            signX = -1;
-        }
+        getPose(poseDriving, x, y, currentYaw);
+
+        double angleRemaining = requestedYaw - currentYaw;
+        // ROS_INFO("requested: %f, current:%f", requestedYaw, currentYaw);
+        normalizeAngle(angleRemaining);
+
+        // double obstacle = collision_checker->obstacle_angle(angleRemaining > 0);
+        double velocityRZ = 0;
+
+        if (std::abs(angleRemaining) < angularTolerance) {
+            // ROS_INFO("MoveBasic: Done rotation, error %f degrees", rad2deg(angleRemaining));
+            doneRZ = true;
+            }
         else{
-            signX = 1;
+            velocityRZ = std::max(minTurningVelocity,
+            std::min(angleRemaining, std::min(maxTurningVelocity,
+                    std::sqrt(2.0 * turningAcceleration *angleRemaining))));
+            doneRZ= false;
         }
 
-        double distRemainingY = abs(remaining.y());
-        if(remaining.y() < 0.0){
-            signY = -1;
+        ROS_INFO("Angle:%f", rad2deg(angleRemaining));
+
+
+        if (!doneRZ){
+            bool counterwise = (angleRemaining < 0.0);
+            if (counterwise) {
+                velocityRZ = -velocityRZ;
+            }
+            sendCmdXY(velocityRZ,0, 0);
+            ROS_INFO("Correcting yaw");
         }
-        else{
-            signY = 1;
+        else{ // Only move linear if the yaw angle has been fixed 
+            ROS_INFO("Moving forward");
+            if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
+                ROS_WARN("MoveBasic: Cannot determine robot pose for linear approach");
+                return false;
+            }
+            goalInBase = poseDriving * goalInDriving;
+            remaining = goalInBase.getOrigin();
+            double distRemaining = sqrt(remaining.x() * remaining.x() + remaining.y() * remaining.y());
+            // Change according to axis 
+            double distRemainingX = abs(remaining.x());
+            if(remaining.x() < 0.0){
+                signX = -1;
+            }
+            else{
+                signX = 1;
+            }
+
+            double distRemainingY = abs(remaining.y());
+            if(remaining.y() < 0.0){
+                signY = -1;
+            }
+            else{
+                signY = 1;
+            }
+
+            double obstacleDist = 99999;
+
+
+            // ROS_INFO("%f", distRemainingX);
+            double velocityX = std::max(minLinearVelocity,
+            std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingX/2)),
+                        std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
+                                        std::min(std::abs(obstacleDist), std::abs(distRemainingX))))));
+
+            // ROS_INFO("%f", distRemainingY);
+            double velocityY = std::max(minLinearVelocity,
+            std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingY/2)),
+                        std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
+                                        std::min(std::abs(obstacleDist), std::abs(distRemainingY))))));
+            // ROS_INFO("Vel:%f", velocity);
+
+
+            // Abort Checks
+            if (actionServer->isPreemptRequested()) {
+                ROS_INFO("MoveBasic: Stopping move due to preempt");
+                actionServer->setPreempted();
+                sendCmdXY(0, 0, 0);
+                return false;
+            }
+
+            /* Finish Check */
+            doneX = distRemainingX < linearTolerance/2;
+            doneY = distRemainingY < linearTolerance;
+
+            if (doneX and doneY) {
+                ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
+                velocityX = 0;
+                velocityY = 0;
+                done = true;
+                sendCmdXY(rotation, velocityX, velocityY);
+                return done;
+            }
+            else if(doneX){
+                velocityX = 0;
+            }
+            else if(doneY){
+                velocityY = 0;
+            }
+            sendCmdXY(0, velocityX * signX, velocityY * signY);
         }
-
-        double obstacleDist = 99999;
-
-
-        ROS_INFO("%f", distRemainingX);
-        double velocityX = std::max(minLinearVelocity,
-		std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingX/2)),
-                	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
-								    std::min(std::abs(obstacleDist), std::abs(distRemainingX))))));
-
-        ROS_INFO("%f", distRemainingY);
-        double velocityY = std::max(minLinearVelocity,
-		std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingY/2)),
-                	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
-								    std::min(std::abs(obstacleDist), std::abs(distRemainingY))))));
-        // ROS_INFO("Vel:%f", velocity);
-
-
-        // Abort Checks
-        if (actionServer->isPreemptRequested()) {
-            ROS_INFO("MoveBasic: Stopping move due to preempt");
-            actionServer->setPreempted();
-            sendCmdXY(0, 0, 0);
-            return false;
-        }
-
-        /* Finish Check */
-
-        if (distRemaining < linearTolerance) {
-            ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
-            velocityX = 0;
-            velocityY = 0;
-            done = true;
-            sendCmdXY(rotation, velocityX, velocityY);
-            return done;
-        }
-        sendCmdXY(rotation, velocityX * signX, velocityY * signY);
     }
 
     return done;

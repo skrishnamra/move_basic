@@ -14,8 +14,9 @@ from mobile_cmd_control.srv import mobile_wait, mobile_waitRequest
 
 class ARMove(object):
     def __init__(self):
-        self.BASE_CAMERA_OFFSET = 0.31
-        self.ROBOT_LENGTH = 0.55
+        self._BASE_CAMERA_OFFSET = 0.31
+        self._ROBOT_LENGTH = 0.55
+        self._AR_BOARD_HEIGHT = 0.6
         ns = "/move_base"
         self.RZ_server = SimpleActionClient(ns + '/RZ', MoveBaseAction)
         self.Y_server = SimpleActionClient(ns + '/Y', MoveBaseAction)
@@ -105,10 +106,10 @@ class ARMove(object):
                     use_search = False
                     if target_id == self.id_list[0]:
                         self.move_rz(self.rotate_to_angle([0,0,0]))
-                        goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                        goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
                         self.move_y(goal)
                     else:
-                        goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                        goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
                         self.move_y(goal)
                         
         except:
@@ -125,7 +126,7 @@ class ARMove(object):
             if self.use_smooth: 
                 # Move towards the AR Board 
                 now = rospy.Time.now()
-                goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
                 if target_id == self.id_list[0]:
                     rospy.sleep(0.2)
                     self.X_server.cancel_goals_at_and_before_time(now)
@@ -134,7 +135,7 @@ class ARMove(object):
                     self.RZ_server.cancel_goals_at_and_before_time(now)
                     rospy.sleep(1.5)
                     self.move_rz(self.rotate_to_angle([0,0,0]))
-                    goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                    goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
                     self.move_y(goal)
                 else:
                     self.move_y(goal, blocking=False)
@@ -152,13 +153,16 @@ class ARMove(object):
                 if target_id == self.id_list[0]:
                     self.move_rz(self.rotate_to_angle([0,0,0]))
                 # Move towards the AR Board 
-                goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+                goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
                 self.move_y(goal)
 
         rospy.sleep(1.0)
-        goal = self.AR_offset(target_id, [-1 -self.BASE_CAMERA_OFFSET,0.0,0.0])
+        goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
         if not target_id == 0 and not target_id ==99:
-            self.move_x(goal) 
+            # Test Move xy
+            goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+            self.move_xy(goal)
+            # self.move_x(goal) 
         
         
     def move(self, move_goal):        
@@ -196,7 +200,7 @@ class ARMove(object):
                 try:
                     d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
                     d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
-                    d_center =  -(float(d_front.data + d_rear.data) +  self.ROBOT_LENGTH)/2 
+                    d_center =  -(float(d_front.data + d_rear.data) +  self._ROBOT_LENGTH)/2 
                     rospy.loginfo("Distance is 0")
                     if d_front.data ==0 or d_rear.data == 0:
                         d_center = -self.center_distance
@@ -204,7 +208,9 @@ class ARMove(object):
                     rospy.loginfo("Cannot find front or rear distance")
                     d_center = -self.center_distance
                 goal = self.AR_offset(id, [d_center,0.0,0.0])  
-                self.move_x(goal)
+                self.move_xy(goal)
+
+
 
  
                 rospy.sleep(0.5)
@@ -308,6 +314,7 @@ class ARMove(object):
         else:
             pose = PoseStamped()
             pose = offset
+        pose.pose.position.z = self._AR_BOARD_HEIGHT
         pose.header.stamp = rospy.Time.now()
         pose.header.frame_id = "base_link"
         
@@ -376,7 +383,7 @@ class ARMove(object):
     #     try:
     #         d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
     #         d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
-    #         d_center =  (float(d_front.data + d_rear.data) +  self.ROBOT_LENGTH)/2 - 1
+    #         d_center =  (float(d_front.data + d_rear.data) +  self._ROBOT_LENGTH)/2 - 1
     #         d_back = -d_center
     #     except:
     #         rospy.loginfo("Cannot find front or rear distance")
