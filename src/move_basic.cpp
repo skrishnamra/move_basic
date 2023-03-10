@@ -985,7 +985,6 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
             doneRZ= false;
         }
 
-        ROS_INFO("Angle:%f", rad2deg(angleRemaining));
 
 
         if (!doneRZ){
@@ -994,10 +993,9 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
                 velocityRZ = -velocityRZ;
             }
             sendCmdXY(velocityRZ,0, 0);
-            ROS_INFO("Correcting yaw");
+            ROS_INFO("Correcting yaw, Angle:%f", rad2deg(angleRemaining));
         }
         else{ // Only move linear if the yaw angle has been fixed 
-            ROS_INFO("Moving forward");
             if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
                 ROS_WARN("MoveBasic: Cannot determine robot pose for linear approach");
                 return false;
@@ -1048,10 +1046,10 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
             }
 
             /* Finish Check */
-            doneX = distRemainingX < linearTolerance/2;
-            doneY = distRemainingY < linearTolerance;
+            doneX = distRemainingX < linearTolerance;
+            doneY = distRemainingY < linearTolerance/4;
 
-            if (doneX and doneY) {
+            if (doneX && doneY) {
                 ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
                 velocityX = 0;
                 velocityY = 0;
@@ -1059,11 +1057,13 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
                 sendCmdXY(rotation, velocityX, velocityY);
                 return done;
             }
-            else if(doneX){
+            else if(!doneY){
                 velocityX = 0;
+                ROS_INFO("Correcting Y, distance: %f meters", remaining.y());
             }
-            else if(doneY){
+            else if(!doneX){
                 velocityY = 0;
+                ROS_INFO("Correcting X, distance: %f meters", remaining.x());
             }
             sendCmdXY(0, velocityX * signX, velocityY * signY);
         }
