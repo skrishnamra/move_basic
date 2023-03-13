@@ -274,7 +274,6 @@ MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros:
 
     if(axis == "Y")
     {
-        minLinearVelocity = 0.18;
         smooth_actionServer.reset(new MoveSmoothActionServer(actionNh, action_name,
         boost::bind(&MoveBasic::move_smoothCB, this, _1) ,false));
         smooth_actionServer->start();
@@ -573,6 +572,9 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
         // Setting Target velocity parameter
         nh.getParam("/move_base/move_basic/min_linear_velocity", minLinearVelocity);
         nh.getParam("/move_base/move_basic/max_linear_velocity", maxLinearVelocity);
+        if(axis=="Y"){
+            minLinearVelocity = minLinearVelocity/2;
+        }
         if (!moveLinear(goalInDriving, drivingFrame)) {
             return;
         }
@@ -718,7 +720,6 @@ bool MoveBasic::rotate(double yaw, const std::string& drivingFrame)
 
         ROS_INFO("%d", oscillations);
         // ROS_INFO("remain:%f", angleRemaining);
-        ROS_INFO("tolerance: %f", rad2deg(angularTolerance));
 
         // if (!firstRotation){
         //     if (std::abs(angleRemaining) < angularTolerance*2) {
@@ -841,11 +842,16 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
                                                         	forwardLeft,
                                                         	forwardRight);
 	}
-        // ROS_INFO("%f", distRemaining);
+        obstacleDist = 9999;
+        // ROS_INFO("dist: %f", distRemaining);
+        ROS_INFO("dist: %f", obstacleDist);
         double velocity = std::max(minLinearVelocity,
-		std::min(std::min(std::abs(obstacleDist), std::abs(distRemaining/2)),
+		std::min(std::min(std::abs(obstacleDist), std::abs(distRemaining)),
                 	std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
 								    std::min(std::abs(obstacleDist), std::abs(distRemaining))))));
+        // if(axis == "y"){
+        //     velocity = velocity * 2;
+        // }
         // ROS_INFO("Vel:%f", velocity);
 
         bool obstacleDetected = (obstacleDist < forwardObstacleThreshold);
@@ -950,7 +956,9 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
     double requestedYaw = 0;
     double x, y, currentYaw;
 
-
+    double distRemainingStartX = remaining.x();
+    double toleranceScale;
+    double prevToleranceScale = 3;
 
     bool done = false;
     ros::Rate r(50);
@@ -993,7 +1001,7 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
                 velocityRZ = -velocityRZ;
             }
             sendCmdXY(velocityRZ,0, 0);
-            ROS_INFO("Correcting yaw, Angle:%f", rad2deg(angleRemaining));
+            // ROS_INFO("Correcting yaw, Angle:%f", rad2deg(angleRemaining));
         }
         else{ // Only move linear if the yaw angle has been fixed 
             if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
@@ -1024,15 +1032,15 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
 
 
             // ROS_INFO("%f", distRemainingX);
-            double velocityX = std::max(minLinearVelocity,
-            std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingX/2)),
+            double velocityX = std::max(minLinearVelocity/2,
+            std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingX)),
                         std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
                                         std::min(std::abs(obstacleDist), std::abs(distRemainingX))))));
 
             // ROS_INFO("%f", distRemainingY);
-            double velocityY = std::max(minLinearVelocity,
+            double velocityY = std::max(minLinearVelocity/2,
             std::min(std::min(std::abs(obstacleDist), std::abs(distRemainingY/2)),
-                        std::min(maxLinearVelocity, std::sqrt(2.0 * linearAcceleration *
+                        std::min(maxLinearVelocity/2, std::sqrt(2.0 * linearAcceleration *
                                         std::min(std::abs(obstacleDist), std::abs(distRemainingY))))));
             // ROS_INFO("Vel:%f", velocity);
 
@@ -1046,8 +1054,15 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
             }
 
             /* Finish Check */
+            // Add Dynamic Linear Tolerance
+            toleranceScale = std::min(1.0 + 2 * distRemainingX/distRemainingStartX, prevToleranceScale);
+            toleranceScale = std::max(1.0, toleranceScale);
+            if(toleranceScale <= prevToleranceScale){
+                prevToleranceScale = toleranceScale;
+                // ROS_INFO("New scale: %f", toleranceScale);
+            }
             doneX = distRemainingX < linearTolerance;
-            doneY = distRemainingY < linearTolerance/4;
+            doneY = distRemainingY < linearTolerance/2 * toleranceScale;
 
             if (doneX && doneY) {
                 ROS_INFO("MoveBasic: Done linear, error: x: %f meters, y: %f meters", remaining.x(), remaining.y());
@@ -1058,7 +1073,7 @@ bool MoveBasic::approachLinear(tf2::Transform& goalInDriving,
                 return done;
             }
             else if(!doneY){
-                velocityX = 0;
+                velocityX = minLinearVelocity/2;
                 ROS_INFO("Correcting Y, distance: %f meters", remaining.y());
             }
             else if(!doneX){

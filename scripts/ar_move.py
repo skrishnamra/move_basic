@@ -209,6 +209,8 @@ class ARMove(object):
                     d_center = -self.center_distance
                 goal = self.AR_offset(id, [d_center,0.0,0.0])  
                 self.move_xy(goal)
+                self.move_rz(self.rotate_to_angle([0,0,0]))
+
 
 
 
