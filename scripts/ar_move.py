@@ -51,7 +51,7 @@ class ARMove(object):
             self.ur3_start_pub = rospy.Publisher("ur3/command_state", ByteMultiArray, queue_size=10)
         rospy.on_shutdown(self.full_shutdown)
 
-        self.center_distance = rospy.get_param("yasui/factory_length",3.0)/2
+        self.center_distance = rospy.get_param("yasui/factory_width",3.0)/2
 
         
     def wait_for_id(self, target_id,use_smooth=False,timeout=30):
@@ -166,6 +166,7 @@ class ARMove(object):
         
         
     def move(self, move_goal):        
+        self.center_distance = rospy.get_param("yasui/factory_width",3.0)/2
         # AR Move
         # while True:
         #     rospy.loginfo("ok")
