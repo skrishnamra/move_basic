@@ -25,6 +25,7 @@ class ARMove(object):
         self.move_smooth_ac = SimpleActionClient(ns + '/move_smooth', move_smoothAction)
         self.clear_goals()
         self.target_pub = rospy.Publisher(ns + "/goal", PoseStamped, queue_size=10)
+        self.inspection_count_pub = rospy.Publisher("/inspection/count", Int32, queue_size=10)
         self.X_server.wait_for_server()
         self.Y_server.wait_for_server()
         self.XY_server.wait_for_server()
@@ -47,7 +48,7 @@ class ARMove(object):
         if self.enable_ur3:
             rospy.wait_for_service('ur3/modbus_wait')
             self.srv_ur3_wait = rospy.ServiceProxy('ur3/modbus_wait', mobile_wait)
-            # Publisher to Modbus Server to write register to start UR3
+            # Publisher to Modbus Server to write coil to start UR3
             self.ur3_start_pub = rospy.Publisher("ur3/command_state", ByteMultiArray, queue_size=10)
         rospy.on_shutdown(self.full_shutdown)
 
@@ -178,54 +179,53 @@ class ARMove(object):
         #     self.ar_move_as.set_preempted() 
         # rospy.sleep(3)
         # rospy.loginfo("print here")
-        if move_goal.use_marker.data:
-            # AR task
-            self.id_list = list(range(move_goal.id.data + 1))
+        n_inspection = move_goal.n_inspection.data
+        for i in range(1,n_inspection + 1):
+            self.inspection_count_pub.publish(Int32(i))
+            if move_goal.use_marker.data:
+                # AR task
+                self.id_list = list(range(move_goal.id.data + 1))
 
-            rospy.loginfo(self.id_list)
-            if move_goal.id.data == 99:
-                self.id_list = [0,1,2,99]
-            
-            for id in self.id_list:
-                self.ar_follow(id) 
-                if self.enable_ur3:
-                    # Calls service which Blocks mobile base if UR3 is not done with movement 
-                    if not id ==0 and not id==99:
-                        rospy.loginfo("executing id:{}".format(id))
-                        self.wait_ur3() #Dont move if it is the first and last marker 
-                else:
+                rospy.loginfo(self.id_list)
+                if move_goal.id.data == 99:
+                    self.id_list = [0,1,2,99]
+                
+                for id in self.id_list:
+                    self.ar_follow(id) 
+                    if self.enable_ur3:
+                        # Calls service which Blocks mobile base if UR3 is not done with movement 
+                        if not id ==0 and not id==99:
+                            rospy.loginfo("executing id:{}".format(id))
+                            self.wait_ur3() #Dont move if it is the first and last marker 
+                    else:
+                        rospy.sleep(0.5)
+                    # Move back if it is not the last ID
                     rospy.sleep(0.5)
-                # Move back if it is not the last ID
-                rospy.sleep(0.5)
-                # Move back to center of the two markers
-                try:
-                    d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
-                    d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
-                    d_center =  -(float(d_front.data + d_rear.data) +  self._ROBOT_LENGTH)/2 
-                    rospy.loginfo("Distance is 0")
-                    if d_front.data ==0 or d_rear.data == 0:
+                    # Move back to center of the two markers
+                    try:
+                        d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
+                        d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
+                        d_center =  -(float(d_front.data + d_rear.data) +  self._ROBOT_LENGTH)/2 
+                        rospy.loginfo("Distance is 0")
+                        if d_front.data ==0 or d_rear.data == 0:
+                            d_center = -self.center_distance
+                    except:
+                        rospy.loginfo("Cannot find front or rear distance")
                         d_center = -self.center_distance
-                except:
-                    rospy.loginfo("Cannot find front or rear distance")
-                    d_center = -self.center_distance
-                goal = self.AR_offset(id, [d_center,0.0,0.0])  
-                self.move_xy(goal)
-                self.move_rz(self.rotate_to_angle([0,0,0]))
-
-
-
-
- 
-                rospy.sleep(0.5)
-        # Normal Move
-        else:
-            if move_goal.enable_rz.data:
-                self.move_rz(self.rotate_offset(move_goal.target_pose))
-            if move_goal.enable_y.data:  
-                self.move_y(self.move_offset(move_goal.target_pose))
-                #self.move_smooth(direction=3)
-            if move_goal.enable_x.data:
-                self.move_x(self.move_offset(move_goal.target_pose))
+                    goal = self.AR_offset(id, [d_center,0.0,0.0])  
+                    self.move_xy(goal)
+                    self.move_rz(self.rotate_to_angle([0,0,0]))
+    
+                    rospy.sleep(0.5)
+            # Normal Move
+            else:
+                if move_goal.enable_rz.data:
+                    self.move_rz(self.rotate_offset(move_goal.target_pose))
+                if move_goal.enable_y.data:  
+                    self.move_y(self.move_offset(move_goal.target_pose))
+                    #self.move_smooth(direction=3)
+                if move_goal.enable_x.data:
+                    self.move_x(self.move_offset(move_goal.target_pose))
         self.ar_move_as.set_succeeded()
         
         # move_goal = self.init_move_goal(frame="base_link")
