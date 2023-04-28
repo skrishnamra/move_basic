@@ -122,7 +122,7 @@ class ARMove(object):
 
         
         if use_search:
-            search_distance = 2
+            search_distance = self.search_distance
             self.search_y(self.move_offset([0.0,search_direction * search_distance,0]), target_id, use_smooth=self.use_smooth)
             if self.use_smooth: 
                 # Move towards the AR Board 
@@ -169,6 +169,7 @@ class ARMove(object):
     def move(self, move_goal):        
         self.center_distance = rospy.get_param("yasui/factory_width",3.0)/2
         self.approach_distance = rospy.get_param("ar_move/approach_distance",1.0)
+        self.search_distance = rospy.get_param("yasui/marker_interval",2.0) + 1.0
         # AR Move
         # while True:
         #     rospy.loginfo("ok")
@@ -291,7 +292,6 @@ class ARMove(object):
         goal.target_pose = pose
         goal.target_pose.pose.position.x += offset[0]
         goal.target_pose.pose.position.y += offset[1] 
-        goal.target_pose.pose.position.z += self._AR_BOARD_HEIGHT
         
         return goal
 
