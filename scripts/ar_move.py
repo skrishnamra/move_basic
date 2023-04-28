@@ -107,10 +107,10 @@ class ARMove(object):
                     use_search = False
                     if target_id == self.id_list[0]:
                         self.move_rz(self.rotate_to_angle([0,0,0]))
-                        goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+                        goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
                         self.move_y(goal)
                     else:
-                        goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+                        goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
                         self.move_y(goal)
                         
         except:
@@ -127,7 +127,7 @@ class ARMove(object):
             if self.use_smooth: 
                 # Move towards the AR Board 
                 now = rospy.Time.now()
-                goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+                goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
                 if target_id == self.id_list[0]:
                     rospy.sleep(0.2)
                     self.X_server.cancel_goals_at_and_before_time(now)
@@ -136,7 +136,7 @@ class ARMove(object):
                     self.RZ_server.cancel_goals_at_and_before_time(now)
                     rospy.sleep(1.5)
                     self.move_rz(self.rotate_to_angle([0,0,0]))
-                    goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+                    goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
                     self.move_y(goal)
                 else:
                     self.move_y(goal, blocking=False)
@@ -154,20 +154,21 @@ class ARMove(object):
                 if target_id == self.id_list[0]:
                     self.move_rz(self.rotate_to_angle([0,0,0]))
                 # Move towards the AR Board 
-                goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+                goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
                 self.move_y(goal)
 
         rospy.sleep(1.0)
-        goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+        goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
         if not target_id == 0 and not target_id ==99:
             # Test Move xy
-            goal = self.AR_offset(target_id, [-1 -self._BASE_CAMERA_OFFSET,0.0,0.0])
+            goal = self.AR_offset(target_id, [-self.approach_distance -self._BASE_CAMERA_OFFSET,0.0,0.0])
             self.move_xy(goal)
             # self.move_x(goal) 
         
         
     def move(self, move_goal):        
         self.center_distance = rospy.get_param("yasui/factory_width",3.0)/2
+        self.approach_distance = rospy.get_param("ar_move/approach_distance",1.0)
         # AR Move
         # while True:
         #     rospy.loginfo("ok")
@@ -290,7 +291,8 @@ class ARMove(object):
         goal.target_pose = pose
         goal.target_pose.pose.position.x += offset[0]
         goal.target_pose.pose.position.y += offset[1] 
-        goal.target_pose.pose.position.z += offset[2]
+        goal.target_pose.pose.position.z += self._AR_BOARD_HEIGHT
+        
         return goal
 
     def rotate_offset(self,offset):
