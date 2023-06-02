@@ -25,10 +25,8 @@ generate_dynamic_reconfigure_options(
   cfg/Movebasic.cfg
 )
 
-#generate_messages(
-#  DEPENDENCIES
-#  std_msgs
-#)
+add_action_files(DIRECTORY action FILES imu_control.action)
+generate_messages(DEPENDENCIES actionlib_msgs std_msgs)
 
 catkin_package(
   INCLUDE_DIRS
@@ -57,9 +55,13 @@ add_definitions(-std=c++11 -Wall -Wextra)
 include_directories(${catkin_INCLUDE_DIRS} include)
 
 add_executable(move_basic src/collision_checker.cpp src/obstacle_points.cpp src/move_basic.cpp)
+add_executable(imu_control src/imu_control.cpp)
 add_dependencies(move_basic ${${PROJECT_NAME}_EXPORTED_TARGETS}
                  ${catkin_EXPORTED_TARGETS})
+add_dependencies(imu_control ${${PROJECT_NAME}_EXPORTED_TARGETS}
+                 ${catkin_EXPORTED_TARGETS})
 target_link_libraries(move_basic ${catkin_LIBRARIES})
+target_link_libraries(imu_control ${catkin_LIBRARIES})
 
 #############
 ## Install ##

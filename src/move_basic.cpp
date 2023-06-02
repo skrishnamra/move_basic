@@ -45,17 +45,20 @@
 #include <thread>
 
 #include <actionlib/server/simple_action_server.h>
+#include <actionlib/client/simple_action_client.h>
 #include <dynamic_reconfigure/server.h>
 #include "move_basic/collision_checker.h"
 #include "move_basic/queued_action_server.h"
 #include <move_basic/MovebasicConfig.h>
 #include <mobile_cmd_control/move_smoothAction.h>
 #include <actionlib_msgs/GoalID.h>
+#include <move_basic/imu_controlAction.h>
 
 #include <string>
 
 typedef actionlib::QueuedActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
 typedef actionlib::SimpleActionServer<mobile_cmd_control::move_smoothAction> MoveSmoothActionServer;
+typedef actionlib::SimpleActionClient<move_basic::imu_controlAction> ImuControlClient;
 
 class MoveBasic {
   private:
@@ -74,6 +77,7 @@ class MoveBasic {
     std::unique_ptr<ObstaclePoints> obstacle_points;
     std::unique_ptr<MoveSmoothActionServer> smooth_actionServer;
 
+    std::unique_ptr<ImuControlClient> imu_actionClient;
     tf2_ros::Buffer tfBuffer;
     tf2_ros::TransformListener listener;
 
@@ -195,6 +199,8 @@ MoveBasic::MoveBasic(ros::NodeHandle &nodeHandle, std::string ax): tfBuffer(ros:
     std::string ns = ros::this_node::getNamespace();
     ros::NodeHandle nh = nodeHandle;
     axis = ax;
+    imu_actionClient.reset(new ImuControlClient("/move_base/imu", true));
+
     // Velocity parameters
     nh.param<double>("min_turning_velocity", minTurningVelocity, 0.10);
     nh.param<double>("max_turning_velocity", maxTurningVelocity, 0.5);
@@ -801,6 +807,9 @@ bool MoveBasic::moveLinear(tf2::Transform& goalInDriving,
             }
         }
         else if (axis == "Y"){
+            move_basic::imu_controlGoal goal;
+            imu_actionClient->sendGoal(goal);
+            imu_actionClient->waitForResult();
             distRemaining = abs(remaining.y());
             if(remaining.y() < 0.0){
                 sign = -1;
@@ -1100,7 +1109,5 @@ int main(int argc, char ** argv) {
     mb_nodeY.run();
     mb_nodeRZ.run();
     mb_nodeXY.run();
-
-
     return 0;
 }
