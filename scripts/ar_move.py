@@ -239,7 +239,7 @@ class ARMove(object):
         self.clear_goals()
         self.ur3_start_pub.publish(ByteMultiArray(data = [1,0]))
         #Need to check if UR is Moving 
-        wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(40)))
+        wait = self.srv_ur3_wait(mobile_waitRequest(timeout=Int32(120)))
         if wait.result == False:
             rospy.loginfo("UR still moving")
             # Stop the UR3
