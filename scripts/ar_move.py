@@ -205,8 +205,8 @@ class ARMove(object):
                     rospy.sleep(0.5)
                     # Move back to center of the two markers
                     try:
-                        d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
-                        d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
+                        d_front = rospy.wait_for_message("/camera_front/distance/x", Float32, timeout=1.5)
+                        d_rear = rospy.wait_for_message("/camera_rear/distance/x", Float32, timeout=1.5)
                         d_center =  -(float(d_front.data + d_rear.data) +  self._ROBOT_LENGTH)/2 
                         rospy.loginfo("Distance is 0")
                         if d_front.data ==0 or d_rear.data == 0:
@@ -386,8 +386,8 @@ class ARMove(object):
 
     # def move_center(self):
     #     try:
-    #         d_front = rospy.wait_for_message("/camera_front/distance", Float32, timeout=1.5)
-    #         d_rear = rospy.wait_for_message("/camera_rear/distance", Float32, timeout=1.5)
+    #         d_front = rospy.wait_for_message("/camera_front/distance/x", Float32, timeout=1.5)
+    #         d_rear = rospy.wait_for_message("/camera_rear/distance/x", Float32, timeout=1.5)
     #         d_center =  (float(d_front.data + d_rear.data) +  self._ROBOT_LENGTH)/2 - 1
     #         d_back = -d_center
     #     except:

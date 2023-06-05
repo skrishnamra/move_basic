@@ -1,0 +1,6 @@
+---
+std_msgs/Int32 id
+std_msgs/Bool result
+std_msgs/Int32 error
+---
+
