@@ -92,15 +92,36 @@ void ImuControl::sendCmd(double angular){
     cmdPub.publish(msg);
 }
 
-void ImuControl::executeAction(const move_basic::imu_controlGoalConstPtr& msg){
+void ImuControl::executeAction(const move_basic::imu_controlGoalConstPtr& goal){
     isFix = false;
     ros::Rate r(5);
-    bool done=false;
+    bool done;
+    boost::shared_ptr<sensor_msgs::Imu const> sharedmsg;
+    sensor_msgs::Imu msg;
+     try{
+        sharedmsg = ros::topic::waitForMessage<sensor_msgs::Imu>("/mobile_imu_control/imu", ros::Duration(3));
+        if(sharedmsg != NULL){
+                msg = *sharedmsg;
+            }
+        tf::Quaternion q(msg.orientation.x,msg.orientation.y,msg.orientation.z,msg.orientation.w);
+        tf::Matrix3x3 m(q);
+        double roll, pitch, yaw;
+        m.getRPY(roll, pitch, yaw);
+        ROS_INFO("%f", yaw * 180/M_PI);
+        if(std::abs(yaw * 180/M_PI) < 10){
+            done = true;
+        } else {
+            done=false;
+        }
+     }
+    catch(ros::Exception){
+        ROS_INFO("Abort");
+        done=true;
+        mobile_imuServer->setAborted();
+    }
 
     while(!done){
         try{
-            boost::shared_ptr<sensor_msgs::Imu const> sharedmsg;
-            sensor_msgs::Imu msg;
             sharedmsg = ros::topic::waitForMessage<sensor_msgs::Imu>("/mobile_imu_control/imu", ros::Duration(3));
             if(sharedmsg != NULL){
                     msg = *sharedmsg;
