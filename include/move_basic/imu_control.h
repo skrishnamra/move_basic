@@ -62,11 +62,13 @@ typedef actionlib::SimpleActionServer<move_basic::imu_controlAction> ImuControlS
 class ImuControl {
     private:
         ros::NodeHandle nh;
+        ros::NodeHandle pnh;
         ros::Publisher cmdPub;
         ros::Subscriber imu_sub;
         ros::ServiceServer srv_imu_control;
         bool isFix;
         double sign;
+        std::string imu_sub_topic;
         std::unique_ptr<ImuControlServer> mobile_imuServer;
 
     public:
@@ -99,7 +101,7 @@ void ImuControl::executeAction(const move_basic::imu_controlGoalConstPtr& goal){
     boost::shared_ptr<sensor_msgs::Imu const> sharedmsg;
     sensor_msgs::Imu msg;
      try{
-        sharedmsg = ros::topic::waitForMessage<sensor_msgs::Imu>("/mobile_imu_control/imu", ros::Duration(3));
+        sharedmsg = ros::topic::waitForMessage<sensor_msgs::Imu>(imu_sub_topic, ros::Duration(3));
         if(sharedmsg != NULL){
                 msg = *sharedmsg;
             }
@@ -122,7 +124,7 @@ void ImuControl::executeAction(const move_basic::imu_controlGoalConstPtr& goal){
 
     while(!done){
         try{
-            sharedmsg = ros::topic::waitForMessage<sensor_msgs::Imu>("/mobile_imu_control/imu", ros::Duration(3));
+            sharedmsg = ros::topic::waitForMessage<sensor_msgs::Imu>(imu_sub_topic, ros::Duration(3));
             if(sharedmsg != NULL){
                     msg = *sharedmsg;
                 }
@@ -160,6 +162,13 @@ void ImuControl::executeAction(const move_basic::imu_controlGoalConstPtr& goal){
 
 ImuControl::ImuControl(ros::NodeHandle& nh){
     cmdPub = ros::Publisher(nh.advertise<geometry_msgs::Twist>("/rover_twist", 1));
+    ros::NodeHandle pnh("~");
+    if (pnh.hasParam("imu_topic"))
+    {
+        pnh.getParam("imu_topic", imu_sub_topic);
+    } else{
+        imu_sub_topic = "/mobile_imu_control/imu";
+    }
 
     mobile_imuServer.reset(new ImuControlServer(nh, "/move_base/imu",
         boost::bind(&ImuControl::executeAction, this, _1) ,false));

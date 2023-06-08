@@ -1,0 +1,6 @@
+<launch>
+    <arg name="imu_topic" default="/mobile_imu_control/imu_yaw"/>
+    <node pkg="move_basic" type="imu_control" name="imu_control_node" output="screen">
+        <param name="imu_topic" value="$(arg imu_topic)" />
+    </node>
+</launch>
